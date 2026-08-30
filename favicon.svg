@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" role="img" aria-label="Tally">
+  <!-- The same cubic as tools/make-icons.mjs and the Android vector drawable:
+       compound growth, a line that only rises. -->
+  <defs>
+    <linearGradient id="t" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8B93FF"/>
+      <stop offset="1" stop-color="#4F46E5"/>
+    </linearGradient>
+  </defs>
+  <rect width="108" height="108" rx="24" fill="url(#t)"/>
+  <path d="M32,74 C47.4,71.6 61.9,62 76,34" fill="none" stroke="#fff"
+        stroke-width="9.5" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Not found — Tally</title>
+  <link rel="icon" href="/tally/favicon.svg" />
+  <link rel="stylesheet" href="/tally/styles.css" />
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("tally.theme");
+        document.documentElement.setAttribute("data-theme", t === "light" ? "light" : "dark");
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div style="max-width:420px;margin:16vh auto;padding:0 20px;text-align:center">
+    <img src="/tally/favicon.svg" alt="" width="56" height="56" style="border-radius:16px" />
+    <h1 style="font-size:22px;margin:18px 0 8px">This page isn't here</h1>
+    <p style="color:var(--muted);margin:0 0 4px">The link may be old, or mistyped.</p>
+    <p style="color:var(--muted);margin:0 0 24px">이 페이지를 찾을 수 없습니다.</p>
+    <a class="btn btn-primary" href="/tally/" style="text-decoration:none">Open Tally</a>
+  </div>
+</body>
+</html>
