@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=3";
+} from "./supabase-config.js?v=4";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -42,7 +42,7 @@ import {
   SEED_CATEGORIES,
   SEED_ACCOUNTS,
   DEFAULT_CURRENCY,
-} from "./money.js?v=3";
+} from "./money.js?v=4";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.

@@ -177,6 +177,20 @@ export function formatCompact(minor, code, opts = {}) {
  * @returns a finite number, or null if the expression is incomplete or
  *          malformed — the caller shows the field as unfinished, not wrong.
  */
+/**
+ * True when the input is a sum rather than a plain number — something whose
+ * answer is worth showing before it is saved.
+ *
+ * A leading minus does not count: "-500" is a number someone typed, not
+ * arithmetic they are part-way through.
+ */
+export function isExpression(input) {
+  const src = String(input == null ? "" : input)
+    .replace(/[,\s]/g, "")
+    .replace(/^[-−–—+]/, "");
+  return /[+\-−–—*/×÷xX()]/.test(src);
+}
+
 export function evalExpression(input) {
   const src = String(input == null ? "" : input)
     .replace(/[×xX*]/g, "*")

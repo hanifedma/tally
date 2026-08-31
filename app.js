@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=3";
-import * as S from "./store.js?v=3";
-import * as M from "./money.js?v=3";
+} from "./supabase-config.js?v=4";
+import * as S from "./store.js?v=4";
+import * as M from "./money.js?v=4";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=3";
+} from "./i18n.js?v=4";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -1663,9 +1663,10 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
   const altLine = el("div", { class: "amount-alt" });
 
   const refreshAlt = () => {
-    const minor = M.parseAmountToMinor(amountInput.value, currency);
+    const raw = amountInput.value;
+    const minor = M.parseAmountToMinor(raw, currency);
     altLine.className = "amount-alt";
-    if (amountInput.value.trim() && minor === null) {
+    if (raw.trim() && minor === null) {
       altLine.textContent = t("tx.calcBad");
       altLine.classList.add("warn");
       return;
@@ -1674,20 +1675,29 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
       altLine.textContent = t("tx.calcHint");
       return;
     }
-    if (currency === c.main_currency) {
-      altLine.textContent = "";
-      return;
+
+    // Someone typing a sum should be able to see the answer while they type,
+    // not have to save the transaction to find out what it came to.
+    const parts = [];
+    if (M.isExpression(raw)) {
+      parts.push(t("tx.calcEquals", { amount: fmt(minor, currency) }));
+      altLine.classList.add("total");
     }
-    if (M.rateMissing(currency, c.main_currency, c.rates)) {
-      altLine.textContent = t("tx.rateMissing", { code: currency });
-      altLine.classList.add("warn");
-      return;
+
+    if (currency !== c.main_currency) {
+      if (M.rateMissing(currency, c.main_currency, c.rates)) {
+        altLine.textContent = t("tx.rateMissing", { code: currency });
+        altLine.classList.add("warn");
+        return;
+      }
+      const inMain = M.toMain(
+        { amount_minor: minor, currency, rate: draft.rate, rate_base: draft.rate_base },
+        c
+      );
+      parts.push(t("tx.converted", { amount: fmt(inMain) }));
     }
-    const inMain = M.toMain(
-      { amount_minor: minor, currency, rate: draft.rate, rate_base: draft.rate_base },
-      c
-    );
-    altLine.textContent = t("tx.converted", { amount: fmt(inMain) });
+
+    altLine.textContent = parts.join("  ·  ");
   };
 
   amountInput.addEventListener("input", () => {

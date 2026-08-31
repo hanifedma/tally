@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=3";
+import * as M from "./money.js?v=4";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -92,6 +92,24 @@ test("arithmetic in the amount field", () => {
   eq(M.evalExpression("1,200"), 1200);
   eq(M.evalExpression("12×3"), 36);
   eq(M.evalExpression("12÷4"), 3);
+});
+
+test("a sum is told apart from a number, so only a sum shows its answer", () => {
+  eq(M.isExpression("12000+3400"), true);
+  eq(M.isExpression("2*3"), true);
+  eq(M.isExpression("12×3"), true);
+  eq(M.isExpression("12÷4"), true);
+  eq(M.isExpression("100 - 20"), true);
+  eq(M.isExpression("(2+3)*4"), true);
+
+  eq(M.isExpression("12000"), false);
+  eq(M.isExpression("1,200"), false);
+  eq(M.isExpression("12.50"), false);
+  eq(M.isExpression(""), false);
+  eq(M.isExpression(null), false);
+  // A number someone typed with a sign, not arithmetic in progress.
+  eq(M.isExpression("-500"), false);
+  eq(M.isExpression("−500"), false);
 });
 
 test("an unfinished or malformed sum is null, not a guess", () => {

@@ -1460,6 +1460,15 @@ dialog.sheet::backdrop {
 
 .amount-alt.warn { color: var(--warn); }
 
+/* The running total of a sum being typed. Brighter than a hint, because it
+   is an answer — the number that will actually be saved. */
+.amount-alt.total {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .amount-field.expense .amount-input { color: var(--expense); }
 .amount-field.income .amount-input { color: var(--income); }
 .amount-field.transfer .amount-input { color: var(--transfer); }

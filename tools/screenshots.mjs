@@ -208,6 +208,13 @@ await evalIn(`(() => {
   a.dispatchEvent(new Event("input", { bubbles: true }));
 })()`);
 await sleep(300);
+// The answer to a sum is shown while it is being typed, not only once it
+// has been saved — 4200+800 reads back as ₩5,000 before anyone commits to it.
+check(
+  "a sum shows its running total",
+  /5,000/.test(await evalIn('document.querySelector("dialog.sheet[open] .amount-alt").textContent')),
+  await evalIn('document.querySelector("dialog.sheet[open] .amount-alt").textContent')
+);
 await evalIn('[...document.querySelectorAll("dialog.sheet[open] .sheet-foot button")].pop().click()');
 await sleep(900);
 check("sheet closed after save", await evalIn('!document.querySelector("dialog.sheet[open]")'));
