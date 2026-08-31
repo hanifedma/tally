@@ -936,7 +936,7 @@ export async function derivedId(userId, name) {
 // ------------------------------------------------------------
 export const SEED_CATEGORIES = [
   { slug: "food", icon: "🍜", color: "orange", kind: "expense", en: "Food", ko: "식비" },
-  { slug: "transport", icon: "🚌", color: "teal", kind: "expense", en: "Transport", ko: "교통" },
+  { slug: "transport", icon: "🚌", color: "sky", kind: "expense", en: "Transport", ko: "교통" },
   { slug: "household", icon: "🏠", color: "amber", kind: "expense", en: "Household", ko: "생활" },
   { slug: "groceries", icon: "🛒", color: "lime", kind: "expense", en: "Groceries", ko: "장보기" },
   { slug: "social", icon: "🥂", color: "pink", kind: "expense", en: "Social", ko: "모임" },

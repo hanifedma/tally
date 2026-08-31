@@ -71,8 +71,8 @@
 
   /* Category and account colours — pastel, so an emoji on top still reads. */
   --c-indigo: #a5b4fc;
-  --c-blue: #93c5fd;
-  --c-sky: #7dd3fc;
+  --c-blue: #7aa2f7;
+  --c-sky: #67e8f9;
   --c-teal: #5eead4;
   --c-green: #86efac;
   --c-lime: #bef264;
@@ -123,8 +123,8 @@
   --scrim: rgba(20, 20, 30, 0.4);
 
   --c-indigo: #6366f1;
-  --c-blue: #3b82f6;
-  --c-sky: #0ea5e9;
+  --c-blue: #2563eb;
+  --c-sky: #0891b2;
   --c-teal: #14b8a6;
   --c-green: #22c55e;
   --c-lime: #84cc16;

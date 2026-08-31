@@ -569,6 +569,13 @@ const STRINGS = {
   },
 };
 
+/**
+ * The whole table, exported for one reason: tools/gen-android-strings.mjs
+ * generates the Android app's Strings.kt from it. Two hand-maintained copies
+ * of five hundred strings drift within a week; a generated one cannot.
+ */
+export const ALL_STRINGS = STRINGS;
+
 let current = DEFAULT_LANG;
 
 export function setLang(lang) {

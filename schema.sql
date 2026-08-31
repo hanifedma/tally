@@ -30,9 +30,10 @@
 --  Helpers
 -- ------------------------------------------------------------
 
--- Every table stamps its own updated_at. Clients must not be trusted to set
--- it: the delta sync cursor is built on it, and a device with a wrong clock
--- would otherwise be able to hide its writes from every other device.
+-- Every table stamps its own updated_at, on insert as well as on update.
+-- Clients must not be trusted to set it: the delta sync cursor is built on
+-- it, and a device with a wrong clock could otherwise write a row dated last
+-- year and hide it from every other device for good.
 create or replace function public.tally_touch_updated_at()
 returns trigger
 language plpgsql
@@ -223,7 +224,7 @@ begin
   foreach t in array array['settings', 'accounts', 'categories', 'transactions', 'budgets'] loop
     execute format('drop trigger if exists tally_touch on public.%I', t);
     execute format(
-      'create trigger tally_touch before update on public.%I
+      'create trigger tally_touch before insert or update on public.%I
        for each row execute function public.tally_touch_updated_at()', t);
   end loop;
 end;

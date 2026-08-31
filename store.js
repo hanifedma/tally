@@ -662,7 +662,14 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
       }
 
       for (const [table, entries] of byTable) {
-        const payload = entries.map((e) => ({ ...e.row, user_id: uid }));
+        // updated_at belongs to the server — it is the delta cursor, and a
+        // client that sets it could hide its own writes from other devices.
+        // The trigger overrules us anyway; not sending it says so.
+        const payload = entries.map((e) => {
+          const row = { ...e.row, user_id: uid };
+          delete row.updated_at;
+          return row;
+        });
         const conflict = table === "settings" ? "user_id" : "id";
         const { data, error } = await client
           .from(table)
