@@ -329,6 +329,26 @@ a {
   min-height: 44px;
 }
 
+/* A rule with the word centred in the gap, drawn without a background so
+   it survives whatever the two themes put behind it. */
+.login-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 14px;
+  color: var(--faint);
+  font-size: 12px;
+  text-transform: lowercase;
+}
+
+.login-or::before,
+.login-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 .login-features {
   margin-top: 34px;
   display: grid;
@@ -1473,6 +1493,20 @@ dialog.sheet::backdrop {
 
 .picker-value.placeholder { color: var(--faint); }
 
+/* A row whose label carries a note underneath. Without this the note is an
+   inline span inside a nowrap box, and reads as "Export as CSVEvery
+   transaction, in a spreadsheet." */
+.picker-value.stacked {
+  white-space: normal;
+  overflow: visible;
+}
+
+.picker-value.stacked .help {
+  display: block;
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
 .picker svg {
   width: 16px;
   height: 16px;
@@ -1647,6 +1681,11 @@ dialog.sheet::backdrop {
 .status.syncing i { background: var(--warn); animation: pulse 1.3s ease-in-out infinite; }
 .status.error i { background: var(--danger); }
 
+/* On this device only: a statement of fact, not a warning. It is steady
+   and quiet — nothing is wrong, and nothing is going to start syncing. */
+.status.local { cursor: pointer; }
+.status.local i { background: var(--faint); }
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
@@ -1670,6 +1709,13 @@ dialog.sheet::backdrop {
   font-weight: 600;
   text-decoration: underline;
   flex: none;
+}
+
+/* The same shape, without the alarm: used to state where a ledger lives,
+   which is worth knowing but is not a problem to be fixed. */
+.banner.quiet {
+  background: var(--surface-2);
+  color: var(--muted);
 }
 
 .toast-wrap {

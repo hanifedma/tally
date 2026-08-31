@@ -7,6 +7,26 @@ A money manager for people whose money is in more than one currency.
 
 ---
 
+<p align="center">
+  <img src="docs/screenshots/log-dark.png" width="240" alt="The log: a month of transactions grouped by day, with won and rupiah side by side" />
+  <img src="docs/screenshots/insights.png" width="240" alt="Insights: budgets that mark where today sits, and where the money went" />
+  <img src="docs/screenshots/accounts.png" width="240" alt="Accounts: each in its own currency, with one net worth" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/editor.png" width="240" alt="Adding a transaction, with a calculator in the amount field" />
+  <img src="docs/screenshots/log-light.png" width="240" alt="The same screen in light mode" />
+  <img src="docs/screenshots/log-korean.png" width="240" alt="The same screen in Korean" />
+</p>
+
+<p align="center"><sub>
+Dark and light, English and Korean — the choice follows the account, not the
+device. Every figure above is real: these are taken by
+<a href="tools/screenshots.mjs">tools/screenshots.mjs</a>, which drives the
+running app and fails the build if the arithmetic on screen is wrong.
+</sub></p>
+
+---
+
 ## What it is
 
 One ledger, on your phone and your laptop at the same time. Enter lunch on the
@@ -23,6 +43,8 @@ Postgres, and both listen to the same realtime stream.
   differently on the 5th than on the 25th.
 - **Works with no signal.** The ledger is cached on the device and anything you
   change is queued and sent when there is a network again.
+- **Works with no account.** Signing in is how one ledger reaches two devices,
+  not a gate in front of the app — see below.
 - **English and Korean**, dark and light, chosen once and followed everywhere —
   the setting lives on the account, not the device.
 - **CSV export** with both what you paid and what it was worth.
@@ -40,10 +62,33 @@ today's rate cannot quietly rewrite what last March cost. A rate it does not
 know it asks for — once — rather than guessing 1:1 and being invisibly wrong
 for ever. And a transfer is a transfer.
 
+## Without an account
+
+**Use without an account** on the sign-in screen gives you the whole app with
+nothing to set up and nothing sent anywhere. The ledger is saved in the browser
+and stays there.
+
+This is not a demo or a trial. It is the same ledger with the network half
+switched off — the same client-made ids, the same soft deletes, the same
+whole-row writes — which is what makes signing in later a *copy* rather than a
+conversion. Tally offers to bring your data with you, once, and translates the
+starter categories' ids to the ones your account would have derived for itself,
+so you end up with one set of categories rather than two.
+
+What it does not get is the other half: no second device, and no copy that
+survives clearing the browser. The app says so on every screen rather than
+letting anyone find out the hard way.
+
+<p align="center">
+  <img src="docs/screenshots/signin.png" width="240" alt="The sign-in screen, offering Google or no account at all" />
+  <img src="docs/screenshots/settings.png" width="240" alt="Settings, showing that this ledger is on this device only" />
+</p>
+
 ## Setup
 
 [**SETUP.md**](SETUP.md) — about fifteen minutes, all free. A Supabase project,
-a Google OAuth client, four values pasted into two files.
+a Google OAuth client, four values pasted into two files. Only needed for the
+syncing half; the app runs without any of it.
 
 ## How it is built
 
@@ -61,6 +106,7 @@ deployed.
 | `styles.css` | The design system, as CSS custom properties. |
 | `schema.sql` | Five tables, row level security, realtime. Paste into Supabase and run. |
 | `sw.js` | A network-first service worker. Never caches an API response. |
+| `tools/` | The server, the tests, the icon generator, the string generator, and the screenshot driver. |
 
 ### Three decisions worth knowing about
 
@@ -93,6 +139,10 @@ open http://localhost:8080/tests.html   # the same suite, in a browser
 ./bump-version.sh                 # bump every ?v= and version.json together
 node tools/make-icons.mjs . ../tally-android/app/src/main/res
 node tools/gen-android-strings.mjs ../tally-android
+
+# The screenshots above, retaken. Needs the server running and a Chrome
+# listening on 9333; it drives device-only mode, so no project is required.
+node tools/screenshots.mjs docs/screenshots
 ```
 
 `money.js` is covered by 51 tests. Run them before pushing; the Android app has

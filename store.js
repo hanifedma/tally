@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=1";
+} from "./supabase-config.js?v=2";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -42,7 +42,7 @@ import {
   SEED_CATEGORIES,
   SEED_ACCOUNTS,
   DEFAULT_CURRENCY,
-} from "./money.js?v=1";
+} from "./money.js?v=2";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.
@@ -272,25 +272,176 @@ export function forgetDevice(uid) {
 }
 
 // ------------------------------------------------------------
+//  Without an account
+//
+//  Not a demo and not a lesser app: the same ledger, with the network half
+//  switched off. It reuses the device cache that a signed-in Tally already
+//  keeps, under a user id of its own, so every rule below — client-made
+//  ids, soft deletes, whole-row writes — holds exactly as it does online.
+//  That is what makes signing in later a copy rather than a conversion.
+//
+//  What it does not get is the other half: no second device, and no copy
+//  of the ledger that survives clearing the browser. The interface says so
+//  rather than letting someone find out.
+// ------------------------------------------------------------
+
+export const LOCAL_UID = "local";
+
+const MODE_KEY = "tally.mode";
+const MIGRATED_KEY = "tally.local.migrated";
+
+/** "local" if this browser has chosen to work without an account. */
+export function getMode() {
+  try {
+    return localStorage.getItem(MODE_KEY) === "local" ? "local" : "cloud";
+  } catch (e) {
+    return "cloud";
+  }
+}
+
+export function setMode(mode) {
+  try {
+    if (mode === "local") localStorage.setItem(MODE_KEY, "local");
+    else localStorage.removeItem(MODE_KEY);
+  } catch (e) {
+    /* private browsing with storage denied: the mode simply will not stick */
+  }
+}
+
+/** The device-only ledger as plain rows, or null if there is not one. */
+export function readLocalLedger() {
+  const cached = readJson(cacheKey(LOCAL_UID), null);
+  if (!cached || cached.v !== CACHE_VERSION) return null;
+  const live = (table) =>
+    (Array.isArray(cached.rows?.[table]) ? cached.rows[table] : [])
+      .map(NORMALIZE[table])
+      .filter((r) => r.id && !r.deleted_at);
+  return {
+    settings: cached.settings ? normalizeSettings(cached.settings) : null,
+    accounts: live("accounts"),
+    categories: live("categories"),
+    transactions: live("transactions"),
+    budgets: live("budgets"),
+  };
+}
+
+/** How many transactions are sitting in the device-only ledger. */
+export function localLedgerSize() {
+  const data = readLocalLedger();
+  return data ? data.transactions.length : 0;
+}
+
+function migratedInto(uid) {
+  const seen = readJson(MIGRATED_KEY, []);
+  return Array.isArray(seen) && seen.includes(uid);
+}
+
+function rememberMigrated(uid) {
+  const seen = readJson(MIGRATED_KEY, []);
+  const list = Array.isArray(seen) ? seen : [];
+  if (!list.includes(uid)) writeJson(MIGRATED_KEY, [...list, uid]);
+}
+
+/**
+ * Is there device-only data worth offering to copy into this account?
+ *
+ * Asked once per account. Someone who said "start fresh" is not asked
+ * again every time they open the app.
+ */
+export function canOfferMigration(uid) {
+  if (!uid || uid === LOCAL_UID) return false;
+  if (migratedInto(uid)) return false;
+  return localLedgerSize() > 0;
+}
+
+/** Never ask this account again, whichever way it was answered. */
+export function declineMigration(uid) {
+  rememberMigrated(uid);
+}
+
+/**
+ * Copy the device-only ledger into a signed-in account.
+ *
+ * The rows keep their own ids — they were made on this device and are
+ * already unique — with one exception. The starter categories and accounts
+ * have ids *derived* from the user id, so that two devices seeding the same
+ * new account write one set of rows rather than two. Carried across
+ * unchanged they would arrive as strangers beside the account's own copy of
+ * the same six categories. So those ids, and every reference to them, are
+ * translated to what this account would have derived for itself.
+ *
+ * The local ledger is not erased. If anything here fails, nothing is lost.
+ */
+export async function migrateLocalInto(ledger, uid) {
+  const data = readLocalLedger();
+  if (!data) return { transactions: 0 };
+
+  const map = new Map();
+  for (const seed of SEED_CATEGORIES) {
+    map.set(await derivedId(LOCAL_UID, "category:" + seed.slug), await derivedId(uid, "category:" + seed.slug));
+  }
+  for (const seed of SEED_ACCOUNTS) {
+    map.set(await derivedId(LOCAL_UID, "account:" + seed.slug), await derivedId(uid, "account:" + seed.slug));
+  }
+  const id = (value) => (value && map.get(value)) || value;
+
+  const batch = [];
+  for (const row of data.accounts) {
+    batch.push({ table: "accounts", row: { ...row, id: id(row.id) } });
+  }
+  for (const row of data.categories) {
+    batch.push({ table: "categories", row: { ...row, id: id(row.id) } });
+  }
+  for (const row of data.transactions) {
+    batch.push({
+      table: "transactions",
+      row: {
+        ...row,
+        id: id(row.id),
+        account_id: id(row.account_id),
+        to_account_id: id(row.to_account_id),
+        category_id: id(row.category_id),
+      },
+    });
+  }
+  for (const row of data.budgets) {
+    batch.push({ table: "budgets", row: { ...row, id: id(row.id), category_id: id(row.category_id) } });
+  }
+
+  ledger.putMany(batch);
+  await ledger.flush();
+
+  // Only call it done once the queue is actually empty — a half-sent copy
+  // must be free to finish later rather than be marked as handled.
+  if (ledger.snapshot().pending === 0) rememberMigrated(uid);
+  return { transactions: data.transactions.length };
+}
+
+// ------------------------------------------------------------
 //  The ledger
 // ------------------------------------------------------------
 
 /**
  * Open the ledger for one signed-in person.
  *
- * @param uid        the user id
+ * @param uid        the user id, or LOCAL_UID for a device-only ledger
  * @param onChange   called with a snapshot whenever anything changes
  * @param onStatus   called with { state, pending, error } as sync moves
  * @param onError    called with (error, messageKey) for things worth saying
+ * @param local      true to keep everything on this device: same ledger,
+ *                   same rules, with every path to the network closed
+ * @param defaults   theme and language to start from when this ledger has
+ *                   no settings of its own yet — what was chosen on the
+ *                   sign-in screen, so that choice survives signing in
  */
-export function openLedger({ uid, onChange, onStatus, onError }) {
+export function openLedger({ uid, onChange, onStatus, onError, local = false, defaults = null }) {
   const rows = {
     accounts: new Map(),
     categories: new Map(),
     transactions: new Map(),
     budgets: new Map(),
   };
-  let settings = normalizeSettings(null);
+  let settings = normalizeSettings(defaults);
   let haveSettings = false;
   let cursors = {};
   /** key "table|id" → the row waiting to be sent. */
@@ -366,6 +517,7 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
   }
 
   function saveOutbox() {
+    if (local) return;
     const ops = [];
     for (const [key, row] of outbox) {
       ops.push({ table: key.slice(0, key.indexOf("|")), row });
@@ -410,8 +562,10 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
   }
 
   function setStatus(next, error) {
-    status = next;
-    if (onStatus) onStatus({ state: next, pending: outbox.size, error: error || null });
+    // With no network there is nothing to be behind, so there is only one
+    // honest thing the status line can say.
+    status = local ? "local" : next;
+    if (onStatus) onStatus({ state: status, pending: outbox.size, error: error || null });
   }
 
   // ---------- merging ----------
@@ -497,7 +651,7 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
 
   /** Pull everything that changed since last time. */
   async function sync() {
-    if (closed) return;
+    if (closed || local) return;
     const client = await getClient();
     setStatus("syncing");
 
@@ -535,7 +689,7 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
   // ---------- realtime ----------
 
   function subscribe() {
-    if (closed || channel) return;
+    if (closed || local || channel) return;
     getClient()
       .then((client) => {
         if (closed || channel) return;
@@ -601,7 +755,7 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
   }
 
   function scheduleRetry() {
-    if (closed || retryTimer) return;
+    if (closed || local || retryTimer) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
       if (closed) return;
@@ -635,12 +789,16 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
   }
 
   function enqueue(table, row) {
+    // Nothing to queue for: the cache *is* the ledger here, and an outbox
+    // that filled up for ever would be the only thing keeping the row.
+    if (local) return;
     outbox.set(table + "|" + rowKey(table, row), row);
     saveOutbox();
   }
 
   async function flush() {
-    if (closed || flushing) {
+    if (closed || local) return;
+    if (flushing) {
       flushAgain = true;
       return;
     }
@@ -729,6 +887,22 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
     emit(true);
     flush();
     return full;
+  }
+
+  /**
+   * Save many rows as one change. Used when a device-only ledger is copied
+   * into an account: a thousand separate `put`s would be a thousand
+   * re-renders of a screen nobody is reading yet.
+   */
+  function putMany(entries) {
+    for (const { table, row } of entries) {
+      const full = { ...row, user_id: uid };
+      applyLocal(table, full);
+      enqueue(table, full);
+    }
+    saveCacheSoon();
+    emit(true);
+    return flush();
   }
 
   /** Mark a row deleted. Reversible: `restore` puts it straight back. */
@@ -839,15 +1013,25 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
     sync().catch(reportSyncError);
   }
 
-  addEventListener("online", onOnline);
-  addEventListener("offline", onOffline);
-  document.addEventListener("visibilitychange", onVisible);
+  if (!local) {
+    addEventListener("online", onOnline);
+    addEventListener("offline", onOffline);
+    document.addEventListener("visibilitychange", onVisible);
+  }
 
   const hadCache = loadCache();
   if (hadCache) emit(true);
   setStatus(navigator.onLine ? "syncing" : "offline");
 
   const ready = (async () => {
+    if (local) {
+      // No fetch to wait for and no socket to open. Give a first-run ledger
+      // its starting categories and accounts, and that is the whole of it.
+      await ensureSeeded();
+      setStatus("local");
+      emit(true);
+      return;
+    }
     if (!navigator.onLine) {
       setStatus("offline");
       // Still emit, so a plane-mode open shows the cached ledger rather
@@ -868,8 +1052,10 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
 
   return {
     ready,
+    local,
     snapshot,
     put,
+    putMany,
     remove,
     restore,
     writeSettings,
@@ -878,9 +1064,11 @@ export function openLedger({ uid, onChange, onStatus, onError }) {
     retry: onOnline,
     close() {
       closed = true;
-      removeEventListener("online", onOnline);
-      removeEventListener("offline", onOffline);
-      document.removeEventListener("visibilitychange", onVisible);
+      if (!local) {
+        removeEventListener("online", onOnline);
+        removeEventListener("offline", onOffline);
+        document.removeEventListener("visibilitychange", onVisible);
+      }
       if (retryTimer) clearTimeout(retryTimer);
       if (saveTimer) {
         clearTimeout(saveTimer);

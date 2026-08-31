@@ -9,7 +9,7 @@
   <meta name="theme-color" content="#0f0f10" />
   <!-- Bumped on every deploy by bump-version.sh. The app polls version.json
        and offers a reload when this no longer matches. -->
-  <meta name="app-version" content="1" />
+  <meta name="app-version" content="2" />
 
   <title>Tally — Money manager · 가계부</title>
   <meta name="description" content="Tally is a fast, private money manager. Track every account and every currency in one ledger, with Google sign-in, real-time sync across your phone and laptop, and budgets that follow your payday. 원과 루피아를 한 장부에. 구글 로그인, 모든 기기 실시간 동기화." />
@@ -77,7 +77,7 @@
   </script>
 
   <!-- Bump ?v= every deploy so browsers fetch fresh CSS and JS. -->
-  <link rel="stylesheet" href="./styles.css?v=1" />
+  <link rel="stylesheet" href="./styles.css?v=2" />
 
   <!-- Set the theme and language before the first paint, so there is never a
        flash of the wrong colours or the wrong words. Defaults: dark, English.
@@ -143,6 +143,9 @@
     <p id="setupP1" style="color:var(--muted)"></p>
     <p id="setupP2" style="color:var(--muted)"></p>
     <ul id="setupList"></ul>
+    <!-- Nothing above needs doing to use Tally on this device alone. -->
+    <button class="btn btn-primary" id="setupLocal" type="button" style="margin-top:18px"></button>
+    <p class="help" id="setupLocalHelp" style="margin-top:10px"></p>
   </section>
 
   <!-- ============================================================
@@ -158,6 +161,11 @@
       <button class="btn btn-primary btn-block hidden" id="loginFallback" hidden></button>
       <p class="help" id="loginWait" style="text-align:center"></p>
       <p class="error hidden" id="loginError" hidden style="text-align:center"></p>
+
+      <!-- Signing in is the better way to use Tally, not the only one. -->
+      <div class="login-or"><span id="loginOr"></span></div>
+      <button class="btn btn-ghost btn-block" id="loginLocal" type="button"></button>
+      <p class="help" id="loginLocalSub" style="text-align:center;margin-top:8px"></p>
 
       <div class="login-features">
         <div class="login-feature">
@@ -251,6 +259,6 @@
 
   <div class="toast-wrap" id="toasts" role="status" aria-live="polite"></div>
 
-  <script type="module" src="./app.js?v=1"></script>
+  <script type="module" src="./app.js?v=2"></script>
 </body>
 </html>

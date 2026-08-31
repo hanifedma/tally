@@ -10,6 +10,13 @@ services want a real person's email and a verification click.
 Work through this in order. The web app and the Android app share every
 value, so doing it once does both.
 
+> **None of this is needed to use Tally.** Press **Use without an account**
+> and the whole app works, with the ledger saved in the browser (or on the
+> phone) and nothing sent anywhere. What the steps below buy is the other
+> half: the same ledger on two devices at once, and a copy that outlives the
+> device. Signing in later offers, once, to bring everything you have already
+> entered with you — so there is no reason to wait before starting.
+
 ---
 
 ## 1. The database — Supabase (5 min)

@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=1";
-import * as S from "./store.js?v=1";
-import * as M from "./money.js?v=1";
+} from "./supabase-config.js?v=2";
+import * as S from "./store.js?v=2";
+import * as M from "./money.js?v=2";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=1";
+} from "./i18n.js?v=2";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -125,6 +125,8 @@ function icon(name, cls) {
 const state = {
   session: null,
   ledger: null,
+  /** True when this ledger lives on this device and goes nowhere else. */
+  local: false,
   data: {
     settings: M.normalizeSettings(null),
     accounts: [],
@@ -329,7 +331,7 @@ function sheetHead(title, close, extra) {
 }
 
 /** A yes/no question. Resolves true only if the confirming button is used. */
-function confirmSheet({ title, body, confirmLabel, danger = false }) {
+function confirmSheet({ title, body, confirmLabel, cancelLabel, danger = false }) {
   return new Promise((resolve) => {
     let answer = false;
     const sheet = openSheet(
@@ -344,7 +346,12 @@ function confirmSheet({ title, body, confirmLabel, danger = false }) {
           el(
             "div",
             { class: "sheet-foot" },
-            el("button", { class: "btn btn-ghost", type: "button", text: t("cancel"), onClick: close }),
+            el("button", {
+              class: "btn btn-ghost",
+              type: "button",
+              text: cancelLabel || t("cancel"),
+              onClick: close,
+            }),
             el("button", {
               class: "btn " + (danger ? "btn-danger" : "btn-primary"),
               type: "button",
@@ -384,20 +391,151 @@ async function boot() {
   applyTheme(localStorage.getItem("tally.theme") === "light" ? "light" : "dark");
   applyLang(localStorage.getItem("tally.lang") === "ko" ? "ko" : "en");
 
+  // Someone who chose to work without an account is not asked again every
+  // morning, and never waits on a network they said they did not want.
+  if (S.getMode() === "local") {
+    startLocal();
+    return;
+  }
+
   if (!isConfigured) {
     renderSetup();
     finishBoot();
     return;
   }
 
-  wireChrome();
+  await startAuth();
+}
 
+let authStarted = false;
+
+async function startAuth() {
+  if (authStarted) return;
+  authStarted = true;
+  wireChrome();
   try {
     await S.watchAuth(onSession);
   } catch (e) {
     console.error("Auth failed to start:", e);
+    authStarted = false;
     renderSetup();
     finishBoot();
+  }
+}
+
+/** The device's current appearance, as a settings patch for a new ledger. */
+function deviceDefaults() {
+  return {
+    theme: document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark",
+    lang: getLang(),
+  };
+}
+
+/**
+ * Open a ledger and point the screens at it. The only difference between a
+ * signed-in ledger and a device-only one is `local` — everything below,
+ * including every callback, is the same either way.
+ */
+function attachLedger({ uid, local }) {
+  if (state.ledger) {
+    state.ledger.close();
+    state.ledger = null;
+  }
+  state.local = local;
+  state.anchor = M.todayKey();
+  state.ledger = S.openLedger({
+    uid,
+    local,
+    defaults: deviceDefaults(),
+    onChange: (snapshot) => {
+      state.data = snapshot;
+      // The account's own appearance settings win over this device's, so
+      // that changing the theme on a laptop changes it on the phone.
+      if (snapshot.settings.theme !== document.documentElement.getAttribute("data-theme")) {
+        applyTheme(snapshot.settings.theme);
+      }
+      if (snapshot.settings.lang !== getLang()) applyLang(snapshot.settings.lang);
+      renderAll();
+      finishBoot();
+    },
+    onStatus: (status) => {
+      state.data.pending = status.pending;
+      state.data.status = status.state;
+      renderStatus();
+    },
+    onError: (err, key) => {
+      console.error(err);
+      toast(t(key || "err.generic"), { danger: true });
+    },
+  });
+
+  renderAll();
+  // Never leave the splash up on a slow first sync — the cached ledger,
+  // or an honest empty state, is better than a spinner.
+  setTimeout(finishBoot, 2500);
+}
+
+// ------------------------------------------------------------
+//  Without an account
+// ------------------------------------------------------------
+
+/** Work on this device only, with nothing to set up and nothing sent. */
+function startLocal() {
+  S.setMode("local");
+  wireChrome();
+  state.session = null;
+  show($("login"), false);
+  show($("setup"), false);
+  show($("app"), true);
+  attachLedger({ uid: S.LOCAL_UID, local: true });
+}
+
+/**
+ * Leave device-only mode for a real account. The local ledger is left
+ * exactly where it is — signing in offers to copy it, and refusing that
+ * offer must not be the same as throwing it away.
+ */
+async function leaveLocal() {
+  S.setMode("cloud");
+  if (state.ledger) {
+    state.ledger.close();
+    state.ledger = null;
+  }
+  state.local = false;
+  show($("app"), false);
+  if (!isConfigured) {
+    renderSetup();
+    return;
+  }
+  renderLogin();
+  await startAuth();
+}
+
+/**
+ * Offer to bring a device-only ledger into an account that has just been
+ * signed into. Asked once per account, and never without being asked.
+ */
+async function offerMigration(uid) {
+  if (!S.canOfferMigration(uid)) return;
+  const n = S.localLedgerSize();
+  const ok = await confirmSheet({
+    title: t("migrate.title"),
+    body: t("migrate.body", { n: t("migrate.count", { n }) }),
+    confirmLabel: t("migrate.yes"),
+    cancelLabel: t("migrate.no"),
+  });
+  if (!ok) {
+    S.declineMigration(uid);
+    return;
+  }
+  toast(t("migrate.working"));
+  try {
+    await S.migrateLocalInto(state.ledger, uid);
+    renderAll();
+    toast(t("migrate.done"));
+  } catch (e) {
+    console.error("Couldn't copy the local ledger:", e);
+    toast(t("migrate.failed"), { danger: true });
   }
 }
 
@@ -410,6 +548,7 @@ function onSession(session) {
       state.ledger.close();
       state.ledger = null;
     }
+    state.local = false;
     state.data = {
       settings: M.normalizeSettings({
         theme: document.documentElement.getAttribute("data-theme"),
@@ -439,37 +578,10 @@ function onSession(session) {
   show($("setup"), false);
   show($("app"), true);
 
-  state.anchor = M.todayKey();
-  state.ledger = S.openLedger({
-    uid: session.user.id,
-    onChange: (snapshot) => {
-      const before = state.data.settings;
-      state.data = snapshot;
-      // The account's own appearance settings win over this device's, so
-      // that changing the theme on a laptop changes it on the phone.
-      if (snapshot.settings.theme !== document.documentElement.getAttribute("data-theme")) {
-        applyTheme(snapshot.settings.theme);
-      }
-      if (snapshot.settings.lang !== getLang()) applyLang(snapshot.settings.lang);
-      void before;
-      renderAll();
-      finishBoot();
-    },
-    onStatus: (status) => {
-      state.data.pending = status.pending;
-      state.data.status = status.state;
-      renderStatus();
-    },
-    onError: (err, key) => {
-      console.error(err);
-      toast(t(key || "err.generic"), { danger: true });
-    },
-  });
+  attachLedger({ uid: session.user.id, local: false });
 
-  renderAll();
-  // Never leave the splash up on a slow first sync — the cached ledger,
-  // or an honest empty state, is better than a spinner.
-  setTimeout(finishBoot, 2500);
+  // After the splash, so the question is not asked behind it.
+  setTimeout(() => offerMigration(session.user.id), 700);
 }
 
 // ============================================================
@@ -487,6 +599,12 @@ function renderSetup() {
   if (!hasSupabaseUrl) list.append(el("li", { text: t("setup.missingUrl") }));
   if (!hasSupabaseKey) list.append(el("li", { text: t("setup.missingKey") }));
   if (!hasGoogleClientId) list.append(el("li", { text: t("setup.missingClient") }));
+
+  // None of the above is needed to keep a ledger on this device, so the
+  // setup screen is a place to start rather than only a place to wait.
+  $("setupLocal").textContent = t("setup.tryLocal");
+  $("setupLocalHelp").textContent = t("setup.tryLocalHelp");
+  $("setupLocal").onclick = startLocal;
 }
 
 // ============================================================
@@ -507,6 +625,10 @@ function renderLogin() {
   $("lf3").textContent = t("login.f3");
   $("lf3s").textContent = t("login.f3sub");
   $("loginWait").textContent = t("login.wait");
+  $("loginOr").textContent = t("login.or");
+  $("loginLocal").textContent = t("login.local");
+  $("loginLocalSub").textContent = t("login.localSub");
+  $("loginLocal").onclick = startLocal;
 
   const themeBtn = $("loginTheme");
   clear(themeBtn).append(
@@ -567,7 +689,14 @@ function showLoginError(message) {
 //  Chrome — header, tabs, period, search
 // ============================================================
 
+let chromeWired = false;
+
 function wireChrome() {
+  // Called on whichever way in was taken, and again if the other is used
+  // later. The listeners below are not all idempotent, so wire once.
+  if (chromeWired) return;
+  chromeWired = true;
+
   $("btnTheme").onclick = () =>
     setSetting({
       theme: document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light",
@@ -648,6 +777,13 @@ function renderStatus() {
     return;
   }
   show(node, true);
+  if (status === "local") {
+    // Not a problem to fix, so it does not read like one — but it is the
+    // one fact about this ledger someone must never be surprised by.
+    label.textContent = t("local.status");
+    node.onclick = openSettings;
+    return;
+  }
   if (status === "offline") label.textContent = t("sync.offline");
   else if (status === "error") label.textContent = t("sync.reconnecting");
   else if (pending) label.textContent = t("sync.pending", { n: pending });
@@ -662,7 +798,7 @@ function renderStatus() {
 // ============================================================
 
 function renderAll() {
-  if (!state.session) return;
+  if (!state.session && !state.local) return;
   renderChrome();
   renderStatus();
   if (state.view === "log") renderLog();
@@ -734,6 +870,7 @@ function renderChrome() {
 function renderBanner() {
   const node = $("banner");
   const missing = missingRates();
+  node.className = "banner" + (state.local && !missing.length ? " quiet" : "");
   if (state.data.status === "offline") {
     clear(node).append(el("span", { text: t("sync.offlineHelp") }));
     show(node, true);
@@ -742,6 +879,18 @@ function renderBanner() {
       el("span", { text: t("tx.rateMissing", { code: missing.join(", ") }) }),
       el("button", { type: "button", text: t("tx.rateFix"), onClick: openRates })
     );
+    show(node, true);
+  } else if (state.local) {
+    // A ledger that exists in one browser and nowhere else is worth saying
+    // out loud, every time — clearing site data is a normal thing to do,
+    // and nobody should discover this afterwards.
+    // Element.append() stringifies null — "…this device only.null" — where
+    // the el() helper skips it. Build the list, then spread it.
+    const parts = [el("span", { text: t("local.banner") })];
+    if (isConfigured) {
+      parts.push(el("button", { type: "button", text: t("local.bannerAction"), onClick: leaveLocal }));
+    }
+    clear(node).append(...parts);
     show(node, true);
   } else {
     show(node, false);
@@ -2825,7 +2974,7 @@ function openSettings() {
           icon(iconName),
           el(
             "span",
-            { class: "picker-value" },
+            { class: "picker-value" + (sublabel ? " stacked" : "") },
             label,
             sublabel ? el("span", { class: "help", style: { margin: 0 }, text: sublabel }) : null
           ),
@@ -2944,7 +3093,7 @@ function openSettings() {
           icon("download"),
           el(
             "span",
-            { class: "picker-value" },
+            { class: "picker-value stacked" },
             t("set.export"),
             el("span", { class: "help", style: { margin: 0 }, text: t("set.exportHelp") })
           )
@@ -2953,37 +3102,96 @@ function openSettings() {
 
       // --- account ---
       const email = state.session?.user?.email;
-      body.append(
-        section(t("set.account")),
-        email ? el("p", { class: "help", style: { marginTop: 0 }, text: t("set.signedInAs", { email }) }) : null,
-        el(
-          "button",
-          {
-            class: "btn btn-ghost btn-block",
-            type: "button",
-            style: { marginTop: "10px" },
-            onClick: async () => {
-              const ok = await confirmSheet({
-                title: t("signout.confirm"),
-                body: t("signout.body"),
-                confirmLabel: t("signout"),
-              });
-              if (!ok) return;
-              const uid = state.session?.user?.id;
-              close();
-              if (uid) S.forgetDevice(uid);
-              await S.signOut();
-            },
-          },
-          icon("signout"),
-          t("signout")
-        ),
+      // add(), not body.append(): a conditional child that comes out null
+      // is skipped here and stringified to the word "null" there.
+      add(body, [
+        section(state.local ? t("local.title") : t("set.account")),
+        state.local
+          ? el("p", { class: "help", style: { marginTop: 0 }, text: t("local.help") })
+          : email
+            ? el("p", { class: "help", style: { marginTop: 0 }, text: t("set.signedInAs", { email }) })
+            : null,
+        state.local && isConfigured
+          ? el(
+              "button",
+              {
+                class: "btn btn-primary btn-block",
+                type: "button",
+                style: { marginTop: "10px" },
+                onClick: () => {
+                  close();
+                  leaveLocal();
+                },
+              },
+              t("local.signIn")
+            )
+          : null,
+        state.local && isConfigured
+          ? el("p", {
+              class: "help",
+              style: { textAlign: "center", marginTop: "8px" },
+              text: t("local.signInHelp"),
+            })
+          : null,
+        state.local
+          ? el(
+              "button",
+              {
+                class: "btn btn-ghost btn-block",
+                type: "button",
+                style: { marginTop: "10px" },
+                onClick: async () => {
+                  const ok = await confirmSheet({
+                    title: t("local.eraseConfirm"),
+                    body: t("local.eraseBody"),
+                    confirmLabel: t("local.erase"),
+                    danger: true,
+                  });
+                  if (!ok) return;
+                  close();
+                  if (state.ledger) {
+                    state.ledger.close();
+                    state.ledger = null;
+                  }
+                  S.forgetDevice(S.LOCAL_UID);
+                  // Straight back into a brand-new device ledger, which
+                  // seeds itself again — not out to a screen they did not
+                  // ask for.
+                  attachLedger({ uid: S.LOCAL_UID, local: true });
+                  toast(t("local.erased"));
+                },
+              },
+              icon("trash"),
+              t("local.erase")
+            )
+          : el(
+              "button",
+              {
+                class: "btn btn-ghost btn-block",
+                type: "button",
+                style: { marginTop: "10px" },
+                onClick: async () => {
+                  const ok = await confirmSheet({
+                    title: t("signout.confirm"),
+                    body: t("signout.body"),
+                    confirmLabel: t("signout"),
+                  });
+                  if (!ok) return;
+                  const uid = state.session?.user?.id;
+                  close();
+                  if (uid) S.forgetDevice(uid);
+                  await S.signOut();
+                },
+              },
+              icon("signout"),
+              t("signout")
+            ),
         el("p", {
           class: "help",
           style: { textAlign: "center", marginTop: "18px" },
           text: "Tally · " + t("set.version", { v: appVersion() }),
-        })
-      );
+        }),
+      ]);
 
       inner.append(sheetHead(t("set.title"), close), body);
     }
