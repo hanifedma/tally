@@ -23,17 +23,21 @@ import { join } from "node:path";
 
 const OUT = process.argv[2] || ".";
 const PORT = 9333;
-const BASE = "http://localhost:8080/";
+// The local server by default. Point it at the deployed site to check that
+// what actually shipped behaves the way what is on disk does:
+//     TALLY_URL=https://hanifedma.com/tally/ node tools/screenshots.mjs out
+const BASE = process.env.TALLY_URL || "http://localhost:8080/";
 mkdirSync(OUT, { recursive: true });
 
 // Written into the page's own localStorage, in the exact shape store.js
 // writes, so what is photographed afterwards has been through the real
 // loadCache path rather than a special one built for pictures.
 const SEED = `(async () => {
-  // No ?v= here on purpose: this is a tool, and it must not need editing
-  // every time bump-version.sh runs.
-  const M = await import("/money.js");
-  const { buildDemoLedger } = await import("/tools/demo-ledger.js");
+  // Relative, not absolute: the deployed site lives under /tally/, and a
+  // leading slash would look for these at the domain root. No ?v= either —
+  // this is a tool, and must not need editing every time the version bumps.
+  const M = await import("./money.js");
+  const { buildDemoLedger } = await import("./tools/demo-ledger.js");
   const d = await buildDemoLedger(M);
   localStorage.setItem("tally.mode", "local");
   localStorage.setItem("tally.cache.local", JSON.stringify({
