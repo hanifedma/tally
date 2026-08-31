@@ -61,7 +61,7 @@ const STRINGS = {
     // --- on this device only ---
     "local.status": "On this device",
     "local.title": "This device only",
-    "local.help": "Your ledger is saved here and sent nowhere. Sign in to sync it with your phone and keep a copy you cannot lose with the device.",
+    "local.help": "Your ledger is saved here and sent nowhere. Sign in to sync it with your other devices and keep a copy that outlives this one.",
     "local.signIn": "Sign in to sync",
     "local.signInHelp": "Keeps everything you have entered.",
     "local.erase": "Erase everything on this device",
@@ -87,7 +87,7 @@ const STRINGS = {
     "setup.missingKey": "Missing: the anon key",
     "setup.missingClient": "Missing: the Google client id",
     "setup.tryLocal": "Use it on this device only",
-    "setup.tryLocalHelp": "Nothing to set up. Everything is saved in this browser, and you can sign in later without losing it.",
+    "setup.tryLocalHelp": "Nothing to set up. Everything is saved on this device, and you can sign in later without losing it.",
 
     // --- month summary ---
     "sum.income": "Income",
@@ -359,7 +359,7 @@ const STRINGS = {
     // --- on this device only ---
     "local.status": "이 기기에만",
     "local.title": "이 기기에만 저장",
-    "local.help": "장부가 이 기기에만 저장되고 아무 곳에도 전송되지 않습니다. 로그인하면 휴대폰과 동기화되고, 기기를 잃어버려도 사라지지 않습니다.",
+    "local.help": "장부가 이 기기에만 저장되고 아무 곳에도 전송되지 않습니다. 로그인하면 다른 기기와 동기화되고, 이 기기를 잃어버려도 사라지지 않습니다.",
     "local.signIn": "로그인하고 동기화",
     "local.signInHelp": "지금까지 입력한 내용은 그대로 유지됩니다.",
     "local.erase": "이 기기의 모든 내용 지우기",
@@ -388,7 +388,7 @@ const STRINGS = {
     "setup.missingKey": "누락됨: anon 키",
     "setup.missingClient": "누락됨: Google 클라이언트 ID",
     "setup.tryLocal": "이 기기에서만 사용하기",
-    "setup.tryLocalHelp": "따로 설정할 것이 없습니다. 모든 내용이 이 브라우저에 저장되고, 나중에 로그인해도 그대로 남습니다.",
+    "setup.tryLocalHelp": "따로 설정할 것이 없습니다. 모든 내용이 이 기기에 저장되고, 나중에 로그인해도 그대로 남습니다.",
 
     // --- month summary ---
     "sum.income": "수입",
