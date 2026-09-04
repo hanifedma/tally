@@ -29,12 +29,31 @@ export async function buildDemoLedger(M) {
   acc.gopay = M.uuid();
   acc.old = M.uuid();
 
-  const day = (back) => {
-    const d = new Date();
-    d.setDate(d.getDate() - back);
+  // Dates are worked out from the month rather than counted back from today.
+  // Ten days back from the 5th is last month, and a ledger built that way
+  // opens on an almost empty screen for the first nine days of every month —
+  // which is exactly when someone new is most likely to be looking at it.
+  const now = new Date();
+  const iso = (d) => {
     const p = (n) => String(n).padStart(2, "0");
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
   };
+  // Days of this month already gone. The demo keeps month_start at 1, so this
+  // is also how much room the current period has.
+  const elapsed = now.getDate() - 1;
+  /** `back` days ago, squeezed to fit when the month is only a few days old. */
+  const day = (back) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() - (elapsed >= 9 ? back : Math.round((back * elapsed) / 9)));
+    return iso(d);
+  };
+  /** The `n`th of last month. Every month has an 11th, so nothing to clamp. */
+  const lastMonth = (n) => iso(new Date(now.getFullYear(), now.getMonth() - 1, n));
+  /** So the salary rows are not still called August's in November. */
+  const monthName = (offset) =>
+    new Date(now.getFullYear(), now.getMonth() + offset, 1).toLocaleString("en-US", {
+      month: "long",
+    });
 
   const categories = M.SEED_CATEGORIES.map((s, i) =>
     M.normalizeCategory({
@@ -63,7 +82,7 @@ export async function buildDemoLedger(M) {
     M.normalizeTx({ id: M.uuid(), user_id: UID, rate_base: "KRW", rate: 1, currency: "KRW", ...o });
 
   const transactions = [
-    tx({ kind: "income", amount_minor: 3120000, account_id: acc.bank, category_id: cat.salary, note: "August salary", occurred_on: day(9), occurred_min: 545 }),
+    tx({ kind: "income", amount_minor: 3120000, account_id: acc.bank, category_id: cat.salary, note: monthName(0) + " salary", occurred_on: day(9), occurred_min: 545 }),
     tx({ kind: "transfer", amount_minor: 400000, account_id: acc.bank, to_account_id: acc.cash, note: "Cash for the month", occurred_on: day(9), occurred_min: 600 }),
     tx({ kind: "transfer", amount_minor: 250000, account_id: acc.bank, to_account_id: acc.gopay, to_amount_minor: 2853881, note: "Top up rupiah", occurred_on: day(8), occurred_min: 615 }),
     tx({ kind: "expense", amount_minor: 68000, account_id: acc.bank, category_id: cat.education, note: "Korean class", occurred_on: day(8), occurred_min: 1080 }),
@@ -80,10 +99,10 @@ export async function buildDemoLedger(M) {
     tx({ kind: "expense", amount_minor: 6200, account_id: acc.cash, category_id: cat.food, note: "Gimbap Cheonguk", occurred_on: day(0), occurred_min: 730 }),
     tx({ kind: "expense", amount_minor: 3300, account_id: acc.cash, category_id: cat.transport, note: "Bus", occurred_on: day(0), occurred_min: 1085 }),
     // Last month, so the period arrows and the trend chart have something.
-    tx({ kind: "income", amount_minor: 3120000, account_id: acc.bank, category_id: cat.salary, note: "July salary", occurred_on: day(39), occurred_min: 545 }),
-    tx({ kind: "expense", amount_minor: 412000, account_id: acc.bank, category_id: cat.household, note: "Rent share", occurred_on: day(38), occurred_min: 600 }),
-    tx({ kind: "expense", amount_minor: 91000, account_id: acc.cash, category_id: cat.food, note: "Groceries week 1", occurred_on: day(35), occurred_min: 1200 }),
-    tx({ kind: "expense", amount_minor: 64000, account_id: acc.bank, category_id: cat.fun, note: "Concert", occurred_on: day(31), occurred_min: 1290 }),
+    tx({ kind: "income", amount_minor: 3120000, account_id: acc.bank, category_id: cat.salary, note: monthName(-1) + " salary", occurred_on: lastMonth(3), occurred_min: 545 }),
+    tx({ kind: "expense", amount_minor: 412000, account_id: acc.bank, category_id: cat.household, note: "Rent share", occurred_on: lastMonth(4), occurred_min: 600 }),
+    tx({ kind: "expense", amount_minor: 91000, account_id: acc.cash, category_id: cat.food, note: "Groceries week 1", occurred_on: lastMonth(7), occurred_min: 1200 }),
+    tx({ kind: "expense", amount_minor: 64000, account_id: acc.bank, category_id: cat.fun, note: "Concert", occurred_on: lastMonth(11), occurred_min: 1290 }),
   ];
 
   const budgets = [

@@ -65,6 +65,11 @@
   --warn-soft: rgba(251, 191, 36, 0.13);
 
   --track: #2a2a30;
+  /* The lifted segment of a segmented control. It has its own token because
+     it must always be lighter than the --surface-2 track it sits in, and in
+     this theme --surface is darker than --surface-2 — reusing it made the
+     selected tab sink into the bar instead of standing on it. */
+  --seg-on: #303039;
   --shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
   --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.4);
   --scrim: rgba(0, 0, 0, 0.62);
@@ -118,6 +123,7 @@
   --warn-soft: rgba(180, 83, 9, 0.1);
 
   --track: #e9e9ef;
+  --seg-on: #ffffff;
   --shadow: 0 14px 40px rgba(20, 20, 40, 0.12);
   --shadow-sm: 0 2px 10px rgba(20, 20, 40, 0.07);
   --scrim: rgba(20, 20, 30, 0.4);
@@ -565,7 +571,7 @@ a {
 }
 
 .tab[aria-selected="true"] {
-  background: var(--surface);
+  background: var(--seg-on);
   color: var(--text);
   box-shadow: var(--shadow-sm);
 }
@@ -618,7 +624,10 @@ a {
   color: var(--muted);
 }
 
-.empty svg {
+/* The decorative mark, and only that. A button inside an empty state brings
+   its own icon, which has to keep the button's colour and sit on the
+   button's centre line rather than 12px above it. */
+.empty > svg {
   width: 34px;
   height: 34px;
   color: var(--faint);
@@ -1164,6 +1173,17 @@ a {
 
 .btn-ghost:hover { background: var(--surface-2); }
 
+/* A destructive action offered quietly. It opens a confirmation, so it does
+   not need to shout — but it sits in the same place as "Sign out" does for a
+   signed-in account, and erasing a ledger for ever must not look identical to
+   leaving one behind. */
+.btn-ghost.danger {
+  color: var(--danger);
+  border-color: var(--danger-soft);
+}
+
+.btn-ghost.danger:hover { background: var(--danger-soft); }
+
 .btn-danger {
   background: var(--danger-soft);
   color: var(--danger);
@@ -1381,7 +1401,7 @@ dialog.sheet::backdrop {
 }
 
 .seg button[aria-pressed="true"] {
-  background: var(--surface);
+  background: var(--seg-on);
   color: var(--text);
   box-shadow: var(--shadow-sm);
 }
@@ -1727,8 +1747,19 @@ dialog.sheet::backdrop {
   color: var(--muted);
 }
 
+/* This is a manual popover, so it can rise above an open sheet — see
+   raiseToasts() in app.js. Everything down to `pointer-events` is undoing the
+   browser's own popover styling, which would otherwise stretch it across the
+   viewport (inset: 0) and give it a border and a background of its own. */
 .toast-wrap {
   position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  overflow: visible;
   left: 50%;
   bottom: calc(24px + env(safe-area-inset-bottom));
   transform: translateX(-50%);

@@ -81,6 +81,7 @@ letting anyone find out the hard way.
 
 <p align="center">
   <img src="docs/screenshots/signin.png" width="240" alt="The sign-in screen, offering Google or no account at all" />
+  <img src="docs/screenshots/empty.png" width="240" alt="Day one: nothing recorded yet, and the banner saying where it will be kept" />
   <img src="docs/screenshots/settings.png" width="240" alt="Settings, showing that this ledger is on this device only" />
 </p>
 

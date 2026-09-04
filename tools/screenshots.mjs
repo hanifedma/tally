@@ -127,6 +127,25 @@ const check = (name, cond, detail) => {
   results.push((cond ? "PASS " : "FAIL ") + name + (detail ? " — " + detail : ""));
 };
 
+// A segmented control's selected segment has to read as raised, which means
+// lighter than the track it sits in — in *both* themes. It is easy to get
+// wrong from tokens alone, because the dark palette's --surface is darker
+// than its --surface-2 while the light palette's is lighter.
+const SEG = `(() => {
+  const on = document.querySelector('.tab[aria-selected="true"]');
+  const track = document.querySelector(".tabs-inner");
+  return getComputedStyle(on).backgroundColor + " on " + getComputedStyle(track).backgroundColor;
+})()`;
+const luma = (css) => {
+  const [r, g, b] = css.match(/[\d.]+/g).map(Number);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const segColours = () => evalIn(SEG);
+const segLifted = async () => {
+  const [on, track] = (await evalIn(SEG)).split(" on ");
+  return luma(on) > luma(track);
+};
+
 // ---------- 1. the setup screen offers a way in ----------
 await viewport(390, 844);
 await c.send("Page.navigate", { url: BASE });
@@ -172,6 +191,63 @@ check(
   "the choice is remembered on the next visit",
   await evalIn('!document.getElementById("app").hidden && document.getElementById("setup").hidden')
 );
+
+// ---------- 2b. the empty state, which is day one for everybody ----------
+check(
+  "the empty state offers a way to start",
+  await evalIn('!!document.querySelector("#viewLog .empty .btn")')
+);
+check(
+  "its button icon takes the button's own colour and sits on its centre line",
+  await evalIn(`(() => {
+    const btn = document.querySelector("#viewLog .empty .btn");
+    const svg = btn.querySelector("svg");
+    const a = getComputedStyle(svg), b = getComputedStyle(btn);
+    return a.color === b.color && a.marginBottom === "0px";
+  })()`),
+  await evalIn(`(() => {
+    const btn = document.querySelector("#viewLog .empty .btn");
+    const svg = btn.querySelector("svg");
+    return getComputedStyle(svg).color + " on " + getComputedStyle(btn).backgroundColor;
+  })()`)
+);
+await shot("empty");
+
+// ---------- 2c. the starting accounts follow the main currency ----------
+// Only while they are still the ones we made and hold nothing. Step 9 checks
+// the other half: once there is a ledger, they stop following.
+const accountCurrencies = () =>
+  evalIn(
+    'JSON.parse(localStorage["tally.cache.local"]).rows.accounts.map(a => a.currency).join(",")'
+  );
+const setMainCurrency = async (code) => {
+  await evalIn('document.getElementById("btnMenu").click()');
+  await sleep(600);
+  await evalIn(`(() => {
+    const s = document.getElementById("setMainCurrency");
+    s.value = "${code}";
+    s.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await sleep(600);
+  await evalIn('document.querySelectorAll("dialog.sheet[open]").forEach(d => d.close())');
+  await sleep(400);
+};
+
+check("starter accounts begin in the default currency", (await accountCurrencies()) === "KRW,KRW",
+  await accountCurrencies());
+await setMainCurrency("IDR");
+check("empty starter accounts follow the main currency", (await accountCurrencies()) === "IDR,IDR",
+  await accountCurrencies());
+check(
+  "and the accounts screen says so",
+  await evalIn(
+    '(document.getElementById("tabAccounts").click(), true) && [...document.querySelectorAll("#viewAccounts .acct")].every(n => /IDR/.test(n.textContent))'
+  )
+);
+await setMainCurrency("KRW");
+check("and follow it back", (await accountCurrencies()) === "KRW,KRW", await accountCurrencies());
+await evalIn('document.getElementById("tabLog").click()');
+await sleep(300);
 
 // ---------- 3. seed a real ledger and reload ----------
 console.log(await evalIn(SEED, true));
@@ -272,19 +348,72 @@ await evalIn(
 );
 await sleep(400);
 await shot("settings");
+
+// ---------- 6b. undo works from inside a sheet ----------
+// A sheet is a modal <dialog>: it makes everything outside it inert and
+// paints above every z-index. A toast raised from one used to be visible and
+// unpressable, which is the worst way for an Undo to fail.
+await evalIn(
+  '[...document.querySelectorAll("dialog.sheet[open] button")].find(b => /Manage categories|분류 관리/.test(b.textContent)).click()'
+);
+await sleep(700);
+const catCount = () =>
+  evalIn('JSON.parse(localStorage["tally.cache.local"]).rows.categories.filter(c => !c.deleted_at).length');
+const before6b = await catCount();
+await evalIn(`(() => {
+  const d = [...document.querySelectorAll("dialog.sheet[open]")].pop();
+  d.querySelector(".manage-row button:last-of-type").click();
+})()`);
+await sleep(600);
+await evalIn(`(() => {
+  const d = [...document.querySelectorAll("dialog.sheet[open]")].pop();
+  [...d.querySelectorAll("button.btn-danger")].pop().click();
+})()`);
+await sleep(600);
+await evalIn(`(() => {
+  const d = [...document.querySelectorAll("dialog.sheet[open]")].pop();
+  [...d.querySelectorAll("button.btn")].pop().click();
+})()`);
+await sleep(900);
+check("deleting from a sheet works", (await catCount()) === before6b - 1,
+  before6b + " → " + (await catCount()));
+const undo = await evalIn(`(() => {
+  const t = document.querySelector(".toast");
+  if (!t) return "no toast";
+  const r = t.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return t.contains(hit) ? "reachable" : "covered by " + (hit ? hit.className : "nothing");
+})()`);
+check("its Undo can actually be pressed, with the sheet still open", undo === "reachable", undo);
+await evalIn('document.querySelector(".toast button").click()');
+await sleep(700);
+check("and it puts the row back", (await catCount()) === before6b, String(await catCount()));
+
 await evalIn('document.querySelectorAll("dialog.sheet[open]").forEach(d => d.close())');
 await sleep(400);
 
 // ---------- 7. light, Korean, desktop ----------
 await evalIn('document.getElementById("tabLog").click()');
 await sleep(400);
+check("the selected tab stands on its track, not in it (dark)", await segLifted(),
+  await segColours());
 await evalIn('document.getElementById("btnTheme").click()');
 await sleep(800);
 check("light theme applied", (await evalIn('document.documentElement.getAttribute("data-theme")')) === "light");
+check("the selected tab stands on its track, not in it (light)", await segLifted(),
+  await segColours());
 await shot("log-light");
 await evalIn('document.getElementById("btnTheme").click()');
 await sleep(700);
 
+// A starter category the app named and nobody renamed. "KB Bank" is not one
+// of ours, so it must come through the switch untouched.
+const named = (name) =>
+  evalIn(
+    `JSON.parse(localStorage["tally.cache.local"]).rows.categories.concat(
+       JSON.parse(localStorage["tally.cache.local"]).rows.accounts
+     ).some(r => r.name === ${JSON.stringify(name)})`
+  );
 await evalIn('document.getElementById("btnLang").click()');
 await sleep(900);
 check("Korean applied", (await evalIn('document.getElementById("tabLog").textContent')) === "내역",
@@ -293,9 +422,12 @@ check(
   "the theme and language choice was saved to the device ledger",
   (await evalIn('JSON.parse(localStorage["tally.cache.local"]).settings.lang')) === "ko"
 );
+check("starter names we wrote follow the language", (await named("식비")) && (await named("현금")));
+check("a name the person chose is left alone", await named("KB Bank"));
 await shot("log-korean");
 await evalIn('document.getElementById("btnLang").click()');
 await sleep(900);
+check("and follow it back", (await named("Food")) && (await named("Cash")));
 
 await viewport(1280, 860, 2);
 await sleep(700);
@@ -303,6 +435,18 @@ check("desktop layout does not scroll sideways",
   await evalIn("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
   (await evalIn("document.documentElement.scrollWidth")) + " vs " + (await evalIn("document.documentElement.clientWidth")));
 await shot("desktop");
+
+// ---------- 9. a real ledger's accounts do not follow anything ----------
+// Last, because it leaves the main currency somewhere else for a moment and
+// no screenshot should catch that. An account with money filed under it owns
+// its currency: `accountBalances` adds minor units without converting.
+await viewport(390, 844);
+await sleep(400);
+const kept = await accountCurrencies();
+await setMainCurrency("USD");
+check("accounts with a history keep their own currency", (await accountCurrencies()) === kept,
+  kept + " → " + (await accountCurrencies()));
+await setMainCurrency("KRW");
 
 // ---------- console ----------
 const problems = c.events

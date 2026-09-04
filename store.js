@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=4";
+} from "./supabase-config.js?v=5";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -41,8 +41,10 @@ import {
   derivedId,
   SEED_CATEGORIES,
   SEED_ACCOUNTS,
+  startersMayFollow,
+  starterRename,
   DEFAULT_CURRENCY,
-} from "./money.js?v=4";
+} from "./money.js?v=5";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.
@@ -918,16 +920,75 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
   }
 
   async function writeSettings(next, { silent = false } = {}) {
+    const wasCurrency = settings.main_currency;
+    const wasLang = settings.lang;
     const merged = normalizeSettings({ ...settings, ...next });
     settings = merged;
     haveSettings = true;
     const row = { ...merged, user_id: uid };
     delete row.updated_at;
     enqueue("settings", row);
+    if (merged.main_currency !== wasCurrency) {
+      await retuneStarterAccounts(wasCurrency, merged.main_currency);
+    }
+    if (merged.lang !== wasLang) await retranslateStarters(wasLang, merged.lang);
     saveCacheSoon();
     if (!silent) emit(true);
     await flush();
     return merged;
+  }
+
+  /**
+   * The starter categories and accounts follow the language, one row at a
+   * time, and only while a row still carries the name we gave it.
+   *
+   * Names are data, not interface: someone who renamed "Food" to "밥값" keeps
+   * their word for it for ever. But someone who never touched the starter set
+   * should not be left reading an English list inside a Korean app, and there
+   * is no ambiguity about which rows those are — the app wrote them, at ids
+   * it can recompute, with names it can still recognise.
+   */
+  async function retranslateStarters(from, to) {
+    for (const [table, seeds, prefix] of [
+      ["categories", SEED_CATEGORIES, "category:"],
+      ["accounts", SEED_ACCOUNTS, "account:"],
+    ]) {
+      for (const seed of seeds) {
+        const id = await derivedId(uid, prefix + seed.slug);
+        const row = rows[table].get(id);
+        if (!row || row.deleted_at) continue;
+        const name = starterRename(row.name, seed[from], seed[to]);
+        if (name === null) continue;
+        applyLocal(table, { ...row, name });
+        enqueue(table, rows[table].get(id));
+      }
+    }
+  }
+
+  /**
+   * The starting accounts follow the main currency, but only while they are
+   * still the ones we made.
+   *
+   * Someone who opens Tally in Jakarta wants a Cash account in rupiah, and
+   * should not have to fix by hand what the app got wrong by guessing. But
+   * the moment a single amount is filed under an account, its currency is
+   * a fact about that money and not a preference: `accountBalances` adds
+   * minor units without converting, on the promise that a transaction is
+   * always in its account's currency. So this runs only for a ledger with
+   * no transactions at all — tombstones included, since a delete can still
+   * be undone — whose accounts are all untouched starters holding nothing.
+   */
+  async function retuneStarterAccounts(from, to) {
+    const all = [...rows.accounts.values()];
+    const starters = new Set();
+    for (const seed of SEED_ACCOUNTS) starters.add(await derivedId(uid, "account:" + seed.slug));
+    if (!startersMayFollow(all, rows.transactions.size, starters, from)) return;
+
+    for (const a of all) {
+      if (a.deleted_at) continue;
+      applyLocal("accounts", { ...a, currency: to });
+      enqueue("accounts", rows.accounts.get(a.id));
+    }
   }
 
   // ---------- first run ----------

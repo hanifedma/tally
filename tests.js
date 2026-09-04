@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=4";
+import * as M from "./money.js?v=5";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -607,6 +607,52 @@ test("the seed set covers both sides of the ledger and has no duplicate slugs", 
   for (const s of M.SEED_ACCOUNTS) {
     assert(s.en && s.ko, s.slug + " needs both languages");
   }
+});
+
+// ------------------------------------------------------------
+//  Starter rows following a setting
+// ------------------------------------------------------------
+
+const starterAccount = (over) =>
+  M.normalizeAccount({ id: "s1", currency: "KRW", opening_minor: 0, ...over });
+
+test("empty starter accounts may follow the main currency", () => {
+  const ids = new Set(["s1", "s2"]);
+  eq(M.startersMayFollow([starterAccount({}), starterAccount({ id: "s2" })], 0, ids, "KRW"), true);
+});
+
+test("accounts stop following the moment the ledger means something", () => {
+  const ids = new Set(["s1"]);
+  // One transaction anywhere is enough: an amount is filed in this currency.
+  eq(M.startersMayFollow([starterAccount({})], 1, ids, "KRW"), false);
+  // An opening balance is money too, even with no transactions.
+  eq(M.startersMayFollow([starterAccount({ opening_minor: 5000 })], 0, ids, "KRW"), false);
+  // An account the person made themselves.
+  eq(M.startersMayFollow([starterAccount({ id: "mine" })], 0, ids, "KRW"), false);
+  // One starter already moved by hand: leave the whole set alone.
+  eq(
+    M.startersMayFollow([starterAccount({}), starterAccount({ id: "s2", currency: "IDR" })], 0, new Set(["s1", "s2"]), "KRW"),
+    false
+  );
+  // Nothing to move.
+  eq(M.startersMayFollow([], 0, ids, "KRW"), false);
+  // Deleted starters are not in the way.
+  eq(
+    M.startersMayFollow([starterAccount({}), starterAccount({ id: "s2", deleted_at: "2026-01-01T00:00:00Z" })], 0, ids, "KRW"),
+    true
+  );
+});
+
+test("a starter row is renamed only while it still has the name we gave it", () => {
+  eq(M.starterRename("Food", "Food", "식비"), "식비");
+  eq(M.starterRename("식비", "식비", "Food"), "Food");
+  // Renamed by the person: their word for it survives the switch.
+  eq(M.starterRename("밥값", "Food", "식비"), null);
+  // Already right — nothing to write, and nothing to sync.
+  eq(M.starterRename("식비", "Food", "식비"), null);
+  // A seed whose two languages happen to match ("Other" is not translated
+  // in every pair) must never be rewritten to itself.
+  eq(M.starterRename("Other", "Other", "Other"), null);
 });
 
 // ------------------------------------------------------------

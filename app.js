@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=4";
-import * as S from "./store.js?v=4";
-import * as M from "./money.js?v=4";
+} from "./supabase-config.js?v=5";
+import * as S from "./store.js?v=5";
+import * as M from "./money.js?v=5";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=4";
+} from "./i18n.js?v=5";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -222,8 +222,50 @@ async function setSetting(patch) {
 //  Toasts
 // ------------------------------------------------------------
 
+/**
+ * Keep the toast layer somewhere it can actually be seen and pressed.
+ *
+ * Two separate problems, and only doing both fixes it. A sheet is a
+ * `<dialog>` opened with showModal(), which (a) makes everything outside it
+ * **inert** — a toast at body level is then unclickable no matter what layer
+ * it is in — and (b) is promoted to the top layer, which paints above every
+ * z-index in the document. So the layer is parked inside the topmost open
+ * sheet, which answers inertness, and shown as a manual popover, which puts
+ * it in the top layer without a backdrop and without stealing focus. Being
+ * in the top layer also means no ancestor's overflow or transform can clip
+ * or move it, so `position: fixed` still means the viewport.
+ *
+ * Until this, the Undo after deleting a category or an account was drawn
+ * behind the sheet it was raised from: visible for four seconds in the
+ * corner of a screenshot, and impossible to press.
+ *
+ * Called on every change to either side — a toast added or removed, a sheet
+ * opened or closed — because the top layer is ordered by arrival, so a sheet
+ * opened after a toast would otherwise cover it.
+ */
+// Held by reference rather than looked up each time: closing a sheet the
+// layer was parked in detaches it for an instant, and an id lookup then
+// finds nothing.
+let toastLayer = null;
+const toastWrap = () => (toastLayer ||= $("toasts"));
+
+function placeToasts(wrap) {
+  if (!wrap) return;
+  const sheets = document.querySelectorAll("dialog.sheet[open]");
+  const host = wrap.children.length && sheets.length ? sheets[sheets.length - 1] : document.body;
+  if (wrap.parentNode !== host) host.append(wrap);
+  if (typeof wrap.showPopover !== "function") return;
+  try {
+    if (wrap.matches(":popover-open")) wrap.hidePopover();
+    if (wrap.children.length) wrap.showPopover();
+  } catch {
+    /* An engine without the popover API, or a state we cannot change. The
+       toast is still in the right parent, which is the half that matters. */
+  }
+}
+
 function toast(message, { action, onAction, danger = false, ms = 4200 } = {}) {
-  const wrap = $("toasts");
+  const wrap = toastWrap();
   const node = el(
     "div",
     { class: "toast" + (danger ? " danger" : "") },
@@ -240,12 +282,16 @@ function toast(message, { action, onAction, danger = false, ms = 4200 } = {}) {
       : null
   );
   wrap.append(node);
+  placeToasts(wrap);
   let timer = setTimeout(dismiss, ms);
   function dismiss() {
     clearTimeout(timer);
     if (!node.isConnected) return;
     node.classList.add("leaving");
-    setTimeout(() => node.remove(), 200);
+    setTimeout(() => {
+      node.remove();
+      placeToasts(wrap);
+    }, 200);
   }
   return dismiss;
 }
@@ -285,6 +331,9 @@ function openSheet(build, { onClose } = {}) {
     if (cleaned) return;
     cleaned = true;
     dlg.remove();
+    // The toast layer may have been parked in this sheet, in which case it
+    // has just been removed along with it. Put it back where it belongs now.
+    placeToasts(toastWrap());
     // Only the last sheet standing gives the page its scrolling back.
     if (!document.querySelector("dialog[open]")) document.body.style.overflow = "";
     if (opener && opener.isConnected && typeof opener.focus === "function") opener.focus();
@@ -312,6 +361,9 @@ function openSheet(build, { onClose } = {}) {
   fill(build);
   document.body.style.overflow = "hidden";
   dlg.showModal();
+  // A toast already on screen would be left outside — and inert — behind
+  // the sheet that just opened over it.
+  placeToasts(toastWrap());
 
   return { close, rebuild: (fn) => fill(fn || build) };
 }
@@ -3028,7 +3080,7 @@ function openSettings() {
       );
 
       // --- money ---
-      const mainSelect = el("select", { class: "select" });
+      const mainSelect = el("select", { class: "select", id: "setMainCurrency" });
       for (const code of M.CURRENCY_CODES) {
         mainSelect.append(
           el("option", {
@@ -3039,7 +3091,14 @@ function openSettings() {
         );
       }
       mainSelect.addEventListener("change", async () => {
+        // The starting accounts follow the main currency while the ledger is
+        // still empty. That is what someone outside Korea wants, but it is
+        // done on their behalf, so say it happened rather than let them find
+        // out later.
+        const stamp = () => state.data.accounts.map((a) => a.id + a.currency).join();
+        const before = stamp();
         await setSetting({ main_currency: mainSelect.value });
+        if (stamp() !== before) toast(t("set.accountsFollowed", { code: mainSelect.value }));
         build();
         renderAll();
       });
@@ -3147,7 +3206,7 @@ function openSettings() {
           ? el(
               "button",
               {
-                class: "btn btn-ghost btn-block",
+                class: "btn btn-ghost danger btn-block",
                 type: "button",
                 style: { marginTop: "10px" },
                 onClick: async () => {
