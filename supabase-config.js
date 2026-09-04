@@ -22,8 +22,8 @@
 //  Full walkthrough: SETUP.md (about ten minutes, free tier).
 // ============================================================
 
-export const supabaseUrl = "PASTE_YOUR_SUPABASE_URL";
-export const supabaseAnonKey = "PASTE_YOUR_SUPABASE_ANON_KEY";
+export const supabaseUrl = "https://zibjtnclujlsfhkiggrg.supabase.co";
+export const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InppYmp0bmNsdWpsc2Zoa2lnZ3JnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg1Mzg5MjksImV4cCI6MjEwNDExNDkyOX0.UudhYwglkg5Rpor0Zt3H27nVISqPzH9AomOvPg34T3Q";
 
 // ============================================================
 //  The Google OAuth web client id — what decides the wording of the
@@ -58,7 +58,7 @@ export const supabaseAnonKey = "PASTE_YOUR_SUPABASE_ANON_KEY";
 //  Leave it empty and sign-in still works: it falls back to the redirect
 //  described above, project ref and all.
 // ============================================================
-export const googleClientId = "PASTE_YOUR_GOOGLE_WEB_CLIENT_ID";
+export const googleClientId = "964081959156-a30tj98puhmcve27s4n629ndnipct344.apps.googleusercontent.com";
 
 /** A value that has actually been filled in, as opposed to a placeholder. */
 const filled = (v) =>
