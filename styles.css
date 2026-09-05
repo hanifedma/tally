@@ -1288,6 +1288,13 @@ dialog.sheet::backdrop {
   .sheet-inner {
     position: relative;
     margin: 6vh auto;
+    /* width, not just max-width. The dialog is a flex container here, so
+       the card is a flex item and sizes to fit its *content* — a cap alone
+       never makes it fill. A sheet whose content has no width of its own
+       then collapses: the chip grid asked how wide the card was, the card
+       asked the grid, and a picker settled at 183px, one column, however
+       much room was going spare. */
+    width: 100%;
     max-width: 480px;
     max-height: 88svh;
     border-radius: var(--radius-xl);
