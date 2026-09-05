@@ -301,6 +301,20 @@ function toast(message, { action, onAction, danger = false, ms = 4200 } = {}) {
 // ------------------------------------------------------------
 
 /**
+ * Sheets that follow the ledger instead of freezing at the moment they
+ * opened. `renderAll` rebuilds every one of them.
+ *
+ * Only sheets that *list* things belong here. An editor must not be in it:
+ * rebuilding one mid-edit would take the caret out of whatever was being
+ * typed, and its own contents are a draft, not the ledger.
+ */
+const liveSheets = new Set();
+
+function rebuildLiveSheets() {
+  for (const sheet of liveSheets) sheet.rebuild();
+}
+
+/**
  * Open a sheet.
  *
  * A <dialog> is created for each one and removed when it closes, rather
@@ -313,12 +327,19 @@ function toast(message, { action, onAction, danger = false, ms = 4200 } = {}) {
  * `build(inner, close)` fills the card in. The returned handle can
  * rebuild that content in place, keeping the sheet, its scroll position
  * and its place in the stack.
+ *
+ * @param live  re-render this sheet whenever the ledger changes — because a
+ *              list left open is a claim about what exists, and it goes
+ *              stale the moment anything is added from a sheet on top of it
+ *              or, just as easily, from the phone in the other pocket.
  */
-function openSheet(build, { onClose } = {}) {
+function openSheet(build, { onClose, live = false } = {}) {
   const inner = el("div", { class: "sheet-inner" });
   const dlg = el("dialog", { class: "sheet" }, inner);
   const opener = document.activeElement;
   let cleaned = false;
+  /** Set below, once there is something to hand back. */
+  let handle = null;
 
   document.body.append(dlg);
 
@@ -330,6 +351,7 @@ function openSheet(build, { onClose } = {}) {
   function cleanup() {
     if (cleaned) return;
     cleaned = true;
+    if (handle) liveSheets.delete(handle);
     dlg.remove();
     // The toast layer may have been parked in this sheet, in which case it
     // has just been removed along with it. Put it back where it belongs now.
@@ -365,7 +387,9 @@ function openSheet(build, { onClose } = {}) {
   // the sheet that just opened over it.
   placeToasts(toastWrap());
 
-  return { close, rebuild: (fn) => fill(fn || build) };
+  handle = { close, rebuild: (fn) => fill(typeof fn === "function" ? fn : build) };
+  if (live) liveSheets.add(handle);
+  return handle;
 }
 
 function sheetHead(title, close, extra) {
@@ -859,6 +883,10 @@ function renderAll() {
   show($("viewLog"), state.view === "log");
   show($("viewInsights"), state.view === "insights");
   show($("viewAccounts"), state.view === "accounts");
+
+  // A list sheet open over all of this is showing the same ledger, and has
+  // to be told too.
+  rebuildLiveSheets();
 }
 
 function renderChrome() {
@@ -2351,7 +2379,9 @@ function openAccount(existing) {
 
       const errorNode = el("p", { class: "error hidden", hidden: true });
 
-      body.append(
+      // add(), not body.append(): the archive row is null on a new one, and
+      // native append stringifies that into the word "null" on the sheet.
+      add(body, [
         el("div", { class: "field" }, el("span", { class: "field-label", text: t("acc.name") }), nameInput),
         el(
           "div",
@@ -2385,7 +2415,7 @@ function openAccount(existing) {
             )
           : null,
         errorNode
-      );
+      ]);
 
       const foot = el("div", { class: "sheet-foot" });
       if (existing) {
@@ -2549,7 +2579,9 @@ function openCategory(existing, kind) {
 
       const errorNode = el("p", { class: "error hidden", hidden: true });
 
-      body.append(
+      // add(), not body.append(): the archive row is null on a new one, and
+      // native append stringifies that into the word "null" on the sheet.
+      add(body, [
         el(
           "div",
           { class: "row-2", style: { gridTemplateColumns: "72px 1fr" } },
@@ -2577,7 +2609,7 @@ function openCategory(existing, kind) {
             )
           : null,
         errorNode
-      );
+      ]);
 
       const foot = el("div", { class: "sheet-foot" });
       if (existing) {
@@ -2772,7 +2804,9 @@ function openManageCategories(startKind) {
     build();
   }
 
-  sheet = openSheet(content);
+  // live: this is a list of what exists, and a category added from the
+  // editor on top of it — or on another device — has to appear here.
+  sheet = openSheet(content, { live: true });
 }
 
 // ============================================================
