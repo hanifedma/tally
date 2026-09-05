@@ -104,16 +104,23 @@ This is the fiddly half. Read step 4 before you do step 3.
    **Android**. Name it `Tally android`.
 
    - Package name: `com.hanifedma.tally`
-   - SHA-1 certificate fingerprint: the one printed by
+   - SHA-1 certificate fingerprints — **add both**:
 
      ```bash
      cd tally-android
-     keytool -list -v -keystore tally-release.jks -alias tally
+     keytool -list -v -keystore tally-release.jks -alias tally          # release
+     keytool -list -v -keystore ~/.android/debug.keystore \
+             -alias androiddebugkey -storepass android                 # debug
      ```
 
-     (The password is in `tally-android/keystore.properties`, which is not
-     committed. If you rebuild the keystore, the fingerprint changes and this
-     entry has to change with it.)
+     A release build and a debug build are signed by different keys, so to
+     Google they are different apps. Register only the release one and
+     sign-in works on the APK and fails on everything you Run from Android
+     Studio, with no useful error to say why.
+
+     (The release password is in `tally-android/keystore.properties`, which
+     is not committed. If you rebuild the keystore the fingerprint changes,
+     and this entry has to change with it.)
 
    This client is never referenced in code. It exists so that Google will
    issue tokens to an app signed with *that* certificate — which is what
