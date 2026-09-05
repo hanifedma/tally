@@ -844,7 +844,8 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
    */
   function isSetupProblem(err) {
     const code = String((err && err.code) || "");
-    return /^42/.test(code) || /^PGRST/.test(code) || err.status === 401 || err.status === 403;
+    const status = err && err.status;
+    return /^42/.test(code) || /^PGRST/.test(code) || status === 401 || status === 403;
   }
 
   function isTransient(err) {
@@ -852,6 +853,9 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
     if (!navigator.onLine) return true;
     // Keeps its place in the queue, however long that takes.
     if (isSetupProblem(err)) return true;
+    // "Not now" is not "never": a timeout or a rate limit says nothing at
+    // all about the row, and dropping it would throw away the only copy.
+    if (err.status === 408 || err.status === 429) return true;
     // PostgREST reports a rejected row with a code; a dropped connection
     // has none. Retrying a constraint violation forever would jam the
     // outbox behind a row that is never going to be accepted.
@@ -898,6 +902,17 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
         const payload = entries.map((e) => {
           const row = { ...e.row, user_id: uid };
           delete row.updated_at;
+          // created_at is the server's to fill in too, and a row made on
+          // this device does not have one until the server hands it back:
+          // a starter category, a row rebuilt from an older cache. Sending
+          // `null` is not the same as leaving the key out — the column is
+          // NOT NULL with a default, so an explicit null is refused
+          // outright (23502) while an absent key takes now(). That refusal
+          // is permanent, so the outbox drops the row and says "Couldn't
+          // save that" — which was every write a new account ever made.
+          // On a row that already exists, leaving it out keeps whatever it
+          // was first written with.
+          if (row.created_at == null) delete row.created_at;
           return row;
         });
         const conflict = table === "settings" ? "user_id" : "id";
