@@ -38,9 +38,19 @@ personal ledger will ever need.
    it in, and press **Run**.
 
    It should say *Success. No rows returned.* That has created five tables,
-   locked every one of them to its owner, and turned on the realtime stream
-   that keeps your phone and your laptop in step. It is safe to run again
-   later if you ever pull an update.
+   locked every one of them to its owner, granted the app permission to use
+   them, and turned on the realtime stream that keeps your phone and your
+   laptop in step. It is safe to run again later, and worth doing whenever
+   you pull an update.
+
+   > **If you set the project up before September 2026, run it again now.**
+   > The earlier version of this file left the `GRANT` out and relied on
+   > Supabase's defaults, which do not always apply to tables made from the
+   > SQL editor. Without it every read and write is refused with *permission
+   > denied for table*: sign-in works, the app sits on **Reconnecting…**, and
+   > nothing reaches your other device. Nothing is lost while that is true —
+   > the rows stay on the device that typed them and go up on their own once
+   > this is fixed.
 
 ### Copy the two values
 
@@ -186,6 +196,7 @@ cd tally-android
 | Android says "no Google account is available" | No account on the device, or no Play Services. |
 | Android chooser appears, then fails | The SHA-1 in the Android OAuth client does not match the certificate the APK was signed with. A debug build and a release build have different ones. |
 | "Tally is not connected to a database yet" | `supabase-config.js` or `supabase.properties` still holds a `PASTE_...` placeholder. |
+| Sign-in works, but nothing ever syncs — the status stays on **Reconnecting…** | The tables exist but the app has no privilege to use them. Run `schema.sql` again; the `GRANT` block is what you are missing. Tally now says this in as many words instead of only showing the status. |
 | Sign-in works, but the ledger is empty on one device only | Almost always a caching issue — pull down or reopen. If it persists, check that `schema.sql` ran without errors. |
 
 Nothing here needs a paid plan, and nothing here expires.

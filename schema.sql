@@ -265,6 +265,38 @@ end;
 $$;
 
 -- ------------------------------------------------------------
+--  Table privileges
+--
+--  Row level security decides *which rows* a signed-in person may touch. It
+--  cannot grant the right to touch the table at all — that is an ordinary
+--  SQL privilege, and without it PostgREST answers
+--
+--      42501  permission denied for table accounts
+--
+--  long before any policy is consulted. The app sees every read and write
+--  refused, so the outbox never drains and the status line sits on
+--  "Reconnecting…" for ever, with nothing reaching the other device.
+--
+--  Supabase's default privileges usually cover this, but they are attached
+--  to the role that owns the schema and do not always apply to tables
+--  created by a script pasted into the SQL editor. Granting explicitly costs
+--  nothing, is idempotent, and removes the failure entirely.
+--
+--  Only `authenticated`. `anon` is given nothing: no policy above admits it,
+--  so a grant would buy an empty list instead of an error, and this is a
+--  ledger — an error is the better answer.
+-- ------------------------------------------------------------
+do $$
+declare t text;
+begin
+  foreach t in array array['settings', 'accounts', 'categories', 'transactions', 'budgets'] loop
+    execute format(
+      'grant select, insert, update, delete on public.%I to authenticated', t);
+  end loop;
+end;
+$$;
+
+-- ------------------------------------------------------------
 --  Realtime — what makes a phone and a laptop the same app
 --
 --  REPLICA IDENTITY FULL puts the whole old row in the change event. Tally

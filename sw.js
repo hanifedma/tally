@@ -15,16 +15,16 @@
 //  someone yesterday's balance and call it today's.
 // ============================================================
 
-const VERSION = "tally-v5";
+const VERSION = "tally-v6";
 const SHELL = [
   "./",
   "./index.html",
-  "./app.js?v=5",
-  "./store.js?v=5",
-  "./money.js?v=5",
-  "./i18n.js?v=5",
-  "./supabase-config.js?v=5",
-  "./styles.css?v=5",
+  "./app.js?v=6",
+  "./store.js?v=6",
+  "./money.js?v=6",
+  "./i18n.js?v=6",
+  "./supabase-config.js?v=6",
+  "./styles.css?v=6",
   "./favicon.svg",
   "./icon-192.png",
   "./icon-512.png",
@@ -63,11 +63,41 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
 
   // version.json is how the running app finds out a new one was deployed.
-  // Answering it from the cache would mean it never could.
+  // Answering it from the cache would mean it never could — and that means
+  // the *browser's* HTTP cache as well as this one, which is what no-store
+  // is for. GitHub Pages serves everything with max-age=600, so a plain
+  // fetch() here can be answered from disk with a ten-minute-old file.
   if (url.pathname.endsWith("version.json")) {
-    event.respondWith(fetch(request).catch(() => new Response("{}", {
-      headers: { "Content-Type": "application/json" },
-    })));
+    event.respondWith(
+      fetch(url.href, { cache: "no-store" }).catch(
+        () => new Response("{}", { headers: { "Content-Type": "application/json" } })
+      )
+    );
+    return;
+  }
+
+  // The page itself, for the same reason and with more at stake: index.html
+  // carries the ?v=N that decides which JavaScript the app loads. Served a
+  // ten-minute-old copy, a reload brings back the version it was trying to
+  // leave — the shape of "I refreshed and it is still the old one".
+  //
+  // Requested by URL rather than by Request: a navigation Request cannot be
+  // reconstructed with different options, and fetch(request, init) tries to.
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(url.href, { cache: "no-store", credentials: "same-origin" })
+        .then((response) => {
+          if (response && response.status === 200 && response.type === "basic") {
+            const copy = response.clone();
+            caches.open(VERSION).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cached = (await caches.match(request)) || (await caches.match("./index.html"));
+          return cached || new Response("", { status: 504, statusText: "Offline" });
+        })
+    );
     return;
   }
 

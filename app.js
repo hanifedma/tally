@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=5";
-import * as S from "./store.js?v=5";
-import * as M from "./money.js?v=5";
+} from "./supabase-config.js?v=6";
+import * as S from "./store.js?v=6";
+import * as M from "./money.js?v=6";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=5";
+} from "./i18n.js?v=6";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -3298,23 +3298,103 @@ function exportCsv() {
 //  Service worker and version checks
 // ============================================================
 
+let swRegistration = null;
+let reloading = false;
+const RELOADED_FOR = "tally.reloadedFor";
+
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator) || location.protocol === "file:") return;
-  navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW:", e));
+  navigator.serviceWorker
+    // The worker script itself must never come from the browser's HTTP
+    // cache. GitHub Pages sends max-age=600 on everything, and a worker
+    // that checks for its own replacement by reading a ten-minute-old copy
+    // of itself will not find one.
+    .register("./sw.js", { updateViaCache: "none" })
+    .then((reg) => {
+      swRegistration = reg;
+      reg.update().catch(() => {});
+    })
+    .catch((e) => console.warn("SW:", e));
+
+  // A new worker took over, which only happens when a deploy installed and
+  // activated one: the code this page is running is now the old code.
+  //
+  // Unless there was no worker to replace. On a first visit the page loads
+  // uncontrolled and the brand-new worker claims it, which fires this too —
+  // and reloading there would make every first visit load twice. So the
+  // question is whether there was a controller *before*, captured now.
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController) applyUpdate();
+  });
 }
 
-async function checkForUpdate() {
+/**
+ * Is now a bad moment to reload?
+ *
+ * An open sheet means someone is part-way through typing something that
+ * only exists in the DOM. Everything already saved survives a reload — the
+ * ledger is on the device and the outbox with it — so nothing else counts.
+ */
+function busyEditing() {
+  return Boolean(document.querySelector("dialog.sheet[open]"));
+}
+
+/**
+ * Take the new version.
+ *
+ * Immediately if nothing is in the way, which is almost always: the app is
+ * a list of transactions, and reloading it costs nothing visible. If a
+ * sheet is open, ask instead — pulling the floor out from under a half
+ * typed amount to save someone four seconds is not an improvement.
+ */
+function applyUpdate(target) {
+  if (reloading) return;
+
+  // A CDN can serve a new version.json from one edge and the old page from
+  // another for a minute or two. Reloading again and again while that
+  // settles would be a loop nobody can get out of, so a version is only
+  // ever reloaded for once; if it is still not here, ask instead.
+  let tried = null;
+  try {
+    tried = sessionStorage.getItem(RELOADED_FOR);
+  } catch (e) {
+    /* private mode; the guard is a nicety, not a requirement */
+  }
+  const loop = target != null && tried === String(target);
+
+  if (loop || busyEditing()) {
+    toast(t("update.ready"), {
+      action: t("update.reload"),
+      onAction: () => {
+        reloading = true;
+        location.reload();
+      },
+      ms: 20000,
+    });
+    return;
+  }
+  reloading = true;
+  try {
+    if (target != null) sessionStorage.setItem(RELOADED_FOR, String(target));
+  } catch (e) {
+    /* as above */
+  }
+  location.reload();
+}
+
+/**
+ * @param deep also ask the worker to look for a replacement of itself. The
+ *   browser only does that on navigation, so a page left open would never
+ *   find one — but it fetches sw.js, so it is not for every tick of a timer.
+ */
+async function checkForUpdate({ deep = false } = {}) {
+  if (deep && swRegistration) swRegistration.update().catch(() => {});
   try {
     const res = await fetch("./version.json?ts=" + Date.now(), { cache: "no-store" });
     if (!res.ok) return;
     const { version } = await res.json();
-    if (version && String(version) !== appVersion()) {
-      toast(t("update.ready"), {
-        action: t("update.reload"),
-        onAction: () => location.reload(),
-        ms: 20000,
-      });
-    }
+    if (version && String(version) !== appVersion()) applyUpdate(version);
   } catch (e) {
     /* offline, or the file is not there yet — neither is worth saying */
   }
@@ -3326,7 +3406,12 @@ async function checkForUpdate() {
 
 boot();
 registerServiceWorker();
-setTimeout(checkForUpdate, 4000);
+setTimeout(() => checkForUpdate({ deep: true }), 4000);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") checkForUpdate();
+  if (document.visibilityState === "visible") checkForUpdate({ deep: true });
 });
+// A tab left open on a desk should not be running last week's code. What it
+// asks for is eighteen bytes, and only while the tab is in front of someone.
+setInterval(() => {
+  if (document.visibilityState === "visible") checkForUpdate();
+}, 60000);

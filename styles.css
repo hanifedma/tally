@@ -335,6 +335,19 @@ a {
   min-height: 44px;
 }
 
+/* Google draws its button into that slot as ordinary elements in this
+   document, not an iframe — so its wrappers are ours to correct. For an
+   account it already knows it renders a wider "Continue as …" pill inside a
+   container it paints white, which on a dark page is a hard white frame
+   around a black button. Only the wrappers are neutralised here: the button
+   itself, and the white circle its logo sits in, keep their own colours. */
+.login-btn-slot > div,
+.login-btn-slot > div > div,
+.login-btn-slot > div > div > div:not([role="button"]) {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
 /* A rule with the word centred in the gap, drawn without a background so
    it survives whatever the two themes put behind it. */
 .login-or {

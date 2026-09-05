@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=5";
+} from "./supabase-config.js?v=6";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -44,7 +44,7 @@ import {
   startersMayFollow,
   starterRename,
   DEFAULT_CURRENCY,
-} from "./money.js?v=5";
+} from "./money.js?v=6";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.
@@ -454,6 +454,8 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
   let status = "syncing";
   let flushing = false;
   let flushAgain = false;
+  /** Said once per session: a missing GRANT does not need saying every 30s. */
+  let warnedSetup = false;
   let retryTimer = null;
   let retryDelay = 2000;
 
@@ -651,6 +653,37 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
     return data;
   }
 
+  /**
+   * Put back anything this device has that the server has never seen.
+   *
+   * A write can leave the outbox without arriving: the server refuses it
+   * for good and the queue drops it rather than jam every later row behind
+   * it. That is the right call for a row the server will never accept — and
+   * the wrong one for a row refused because the project was half set up, as
+   * a missing GRANT will do to every write an account ever makes. Either
+   * way the row is still in the cache, still on screen, still counted in
+   * the totals, and it is the only copy in existence.
+   *
+   * So once per session, when the fetch above was a complete one, whatever
+   * the server did not send goes back in the queue. It is an upsert of a
+   * whole row, so doing it when it was not needed costs one request and
+   * changes nothing.
+   *
+   * Tombstones are left out. A first fetch deliberately skips deleted
+   * transactions, so every one this ledger has ever had would look missing,
+   * every time the app is opened.
+   */
+  function requeueMissing(table, arrived) {
+    let n = 0;
+    for (const row of rows[table].values()) {
+      if (row.deleted_at || arrived.has(row.id)) continue;
+      enqueue(table, row);
+      n++;
+    }
+    if (n) console.warn("Tally: re-sending " + n + " " + table + " the server never received");
+    return n;
+  }
+
   /** Pull everything that changed since last time. */
   async function sync() {
     if (closed || local) return;
@@ -668,15 +701,26 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
       changed = true;
     }
 
+    let recovered = 0;
     for (const table of TABLES) {
+      // A first fetch of this session is a complete one, so what does not
+      // come back is genuinely not there. Later fetches are deltas and say
+      // nothing about the rows they leave out.
+      const full = !cursors[table];
+      const arrived = full ? new Set() : null;
       const list = await fetchTable(client, table);
       let newest = cursors[table] || null;
       for (const raw of list) {
+        if (arrived && raw.id) arrived.add(String(raw.id));
         if (acceptServerRow(table, raw)) changed = true;
         if (raw.updated_at && (!newest || raw.updated_at > newest)) newest = raw.updated_at;
       }
       cursors[table] = newest;
+      if (arrived) recovered += requeueMissing(table, arrived);
     }
+
+    // Rows that were only ever on this device now have somewhere to go.
+    if (recovered) await flush();
 
     await ensureSeeded();
 
@@ -779,9 +823,25 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
   // ---------- writing ----------
 
   /** True for the kind of failure that is worth trying again later. */
+  /**
+   * "Not allowed", "no such table", "no such column".
+   *
+   * These are not facts about the row being sent. They are facts about a
+   * database that has not finished being set up — schema.sql not run, or
+   * run before it granted the app permission to use its own tables — and
+   * the fix for them is a line of SQL somewhere else entirely. The row has
+   * to still be here when that happens.
+   */
+  function isSetupProblem(err) {
+    const code = String((err && err.code) || "");
+    return /^42/.test(code) || /^PGRST/.test(code) || err.status === 401 || err.status === 403;
+  }
+
   function isTransient(err) {
     if (!err) return false;
     if (!navigator.onLine) return true;
+    // Keeps its place in the queue, however long that takes.
+    if (isSetupProblem(err)) return true;
     // PostgREST reports a rejected row with a code; a dropped connection
     // has none. Retrying a constraint violation forever would jam the
     // outbox behind a row that is never going to be accepted.
@@ -866,6 +926,13 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
       retryDelay = 2000;
     } catch (err) {
       console.warn("Couldn't send changes yet:", err);
+      // "Reconnecting…" is honest but useless when the connection is fine
+      // and the database is the problem. Say what it actually is, once —
+      // repeating it every retry would be its own kind of broken.
+      if (isSetupProblem(err) && !warnedSetup && onError) {
+        warnedSetup = true;
+        onError(err, "err.setup");
+      }
       setStatus(navigator.onLine ? "error" : "offline", err);
       scheduleRetry();
     } finally {

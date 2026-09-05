@@ -155,19 +155,52 @@ await evalIn("localStorage.clear()");
 await c.send("Page.reload");
 await sleep(2500);
 
+// Which of the two front doors is showing depends on whether this copy has
+// a Supabase project pasted into it: the setup screen explains what is
+// missing, the sign-in screen offers Google. Both must offer the same way
+// past, and the run has to work either way — the deployed site is
+// configured and a fresh checkout is not.
+const front = (await evalIn('!document.getElementById("setup").hidden')) ? "setup" : "login";
+const localButton = front === "setup" ? "setupLocal" : "loginLocal";
 check(
-  "setup screen shown before any choice",
-  await evalIn('!document.getElementById("setup").hidden')
+  "a way in is shown before any choice",
+  await evalIn(`!document.getElementById("${front}").hidden`),
+  front
 );
 check(
-  "setup offers device-only mode",
-  await evalIn('!!document.getElementById("setupLocal").textContent.trim()'),
-  await evalIn('document.getElementById("setupLocal").textContent')
+  "it offers device-only mode",
+  await evalIn(`!!document.getElementById("${localButton}").textContent.trim()`),
+  await evalIn(`document.getElementById("${localButton}").textContent`)
 );
-await shot("setup");
+if (front === "login") {
+  // Google's script is fetched from its own CDN; give it a moment.
+  for (let i = 0; i < 12; i++) {
+    if (await evalIn('!!document.querySelector("#googleSlot div[role=button]")')) break;
+    await sleep(500);
+  }
+  check(
+    "and Google's button is drawn, in the page rather than an iframe",
+    await evalIn('!!document.querySelector("#googleSlot div[role=button]")')
+  );
+  // Google wraps its button in containers it paints for its own theme. On a
+  // dark page a white one reads as a hard frame around the button.
+  check(
+    "with nothing painted white around it",
+    await evalIn(`(() => {
+      const bad = [...document.querySelectorAll("#googleSlot > div, #googleSlot > div > div")]
+        .map(n => getComputedStyle(n).backgroundColor)
+        .filter(bg => bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent");
+      return bad.length === 0 ? true : bad.join();
+    })()`) === true,
+    await evalIn(
+      '[...document.querySelectorAll("#googleSlot > div, #googleSlot > div > div")].map(n => getComputedStyle(n).backgroundColor).join()'
+    )
+  );
+}
+await shot(front === "login" ? "signin" : "setup");
 
 // ---------- 2. one click, and the app is usable ----------
-await evalIn('document.getElementById("setupLocal").click()');
+await evalIn(`document.getElementById("${localButton}").click()`);
 await sleep(1200);
 check("app visible after one click", await evalIn('!document.getElementById("app").hidden'));
 check(
