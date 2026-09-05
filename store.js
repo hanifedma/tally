@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=6";
+} from "./supabase-config.js?v=7";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -44,7 +44,7 @@ import {
   startersMayFollow,
   starterRename,
   DEFAULT_CURRENCY,
-} from "./money.js?v=6";
+} from "./money.js?v=7";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.
@@ -141,7 +141,7 @@ export function loadGoogleIdentity() {
  * audience — before any session exists. What crosses this boundary is a
  * proof, not a claim.
  */
-export async function renderGoogleButton(el, { theme = "dark", locale = "en", onSignIn, onError }) {
+export async function renderGoogleButton(el, { locale = "en", onSignIn, onError }) {
   const ready = await loadGoogleIdentity();
   if (!ready) return false;
   const gid = globalThis.google.accounts.id;
@@ -169,7 +169,17 @@ export async function renderGoogleButton(el, { theme = "dark", locale = "en", on
     el.innerHTML = "";
     gid.renderButton(el, {
       type: "standard",
-      theme: theme === "light" ? "outline" : "filled_black",
+      // Light in both themes, and not a choice about taste.
+      //
+      // On a registered origin Google renders this into an iframe whose
+      // document it paints white, sized to the width asked for rather than
+      // to the button inside it. A dark button in there is a black pill in
+      // a white box — and for an account Google already knows, where the
+      // pill is wider and the box wider still, a black pill in a white
+      // frame. `outline` is white too, so the box and the button are the
+      // same colour and the seam disappears, whatever width Google picks.
+      // The stylesheet rounds the slot off to match.
+      theme: "outline",
       size: "large",
       shape: "pill",
       text: "continue_with",

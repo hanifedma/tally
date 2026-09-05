@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=6";
-import * as S from "./store.js?v=6";
-import * as M from "./money.js?v=6";
+} from "./supabase-config.js?v=7";
+import * as S from "./store.js?v=7";
+import * as M from "./money.js?v=7";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=6";
+} from "./i18n.js?v=7";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -716,7 +716,6 @@ function renderLogin() {
   };
 
   S.renderGoogleButton($("googleSlot"), {
-    theme: document.documentElement.getAttribute("data-theme"),
     locale: getLang(),
     onSignIn: () => show($("loginError"), false),
     onError: () => showLoginError(t("err.auth.generic")),

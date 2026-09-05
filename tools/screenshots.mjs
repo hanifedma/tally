@@ -178,14 +178,29 @@ if (front === "login") {
     if (await evalIn('!!document.querySelector("#googleSlot div[role=button]")')) break;
     await sleep(500);
   }
+  // In the page on an unregistered origin, in an iframe on a registered one.
   check(
-    "and Google's button is drawn, in the page rather than an iframe",
-    await evalIn('!!document.querySelector("#googleSlot div[role=button]")')
+    "and Google's button is drawn",
+    await evalIn(
+      '!!document.querySelector("#googleSlot div[role=button], #googleSlot iframe")'
+    ),
+    await evalIn(
+      'document.querySelector("#googleSlot iframe") ? "iframe" : "in the page"'
+    )
   );
-  // Google wraps its button in containers it paints for its own theme. On a
-  // dark page a white one reads as a hard frame around the button.
+  // The iframe's document is painted white by Google and sized to the width
+  // it was asked for, not to the button. Square white corners on a dark page
+  // are what that looks like, so the slot has to round them off.
   check(
-    "with nothing painted white around it",
+    "and the slot rounds off what Google paints inside it",
+    await evalIn(`(() => {
+      const s = getComputedStyle(document.getElementById("googleSlot"));
+      return s.overflow === "hidden" && parseFloat(s.borderRadius) >= 20;
+    })()`)
+  );
+  // Where it renders in the page, none of its own wrappers may be painted.
+  check(
+    "with nothing painted around it",
     await evalIn(`(() => {
       const bad = [...document.querySelectorAll("#googleSlot > div, #googleSlot > div > div")]
         .map(n => getComputedStyle(n).backgroundColor)
@@ -193,7 +208,7 @@ if (front === "login") {
       return bad.length === 0 ? true : bad.join();
     })()`) === true,
     await evalIn(
-      '[...document.querySelectorAll("#googleSlot > div, #googleSlot > div > div")].map(n => getComputedStyle(n).backgroundColor).join()'
+      '[...document.querySelectorAll("#googleSlot > div, #googleSlot > div > div")].map(n => getComputedStyle(n).backgroundColor).join() || "no wrappers"'
     )
   );
 }
