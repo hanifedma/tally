@@ -2555,7 +2555,6 @@ function openAccount(existing) {
                 const ok = await confirmSheet({
                   title: t("acc.currencyConfirm", { to: draft.currency }),
                   body: t("acc.currencyBody", {
-                    n: filed,
                     from: existing.currency,
                     to: draft.currency,
                     was: fmt(bal, existing.currency),
