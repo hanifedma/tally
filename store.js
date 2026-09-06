@@ -1146,6 +1146,85 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
     }
   }
 
+  /**
+   * Put the account back to its first day.
+   *
+   * Every transaction, budget, account and category goes; the starting set
+   * is rebuilt; the money settings return to their defaults. What survives
+   * is the account itself and the two things that are about the person
+   * rather than the ledger — the theme and the language. Resetting those
+   * would silently hand someone back an English app in a colour scheme they
+   * did not choose, which is not what "start over" is being asked for.
+   *
+   * Tombstones, not deletes. A row that is gone still has to reach the other
+   * devices, and only an UPDATE carries the user_id that row level security
+   * needs before it will let the event through — a real DELETE sends the
+   * primary key alone and is dropped on the way out. The same reason the
+   * rest of the app never really deletes anything.
+   */
+  async function resetAll() {
+    // Settings first, and on their own. The starting accounts take their
+    // currency from main_currency, so resetting it afterwards would
+    // re-denominate the very accounts this function is about to write.
+    await writeSettings(
+      { main_currency: DEFAULT_CURRENCY, week_start: 1, month_start: 1, rates: {} },
+      { silent: true }
+    );
+
+    const stamp = new Date().toISOString();
+    const batch = [];
+    for (const table of ["transactions", "budgets", "accounts", "categories"]) {
+      for (const row of rows[table].values()) {
+        if (row.deleted_at) continue;
+        batch.push({ table, row: { ...row, deleted_at: stamp } });
+      }
+    }
+
+    // Then the starting set, at the ids this account derives for itself —
+    // the same ids the rows above are being buried under. That collision is
+    // deliberate: the outbox is keyed by row, so a starter is not sent as a
+    // deletion and then again as an insert. It is sent once, as itself.
+    const lang = settings.lang === "ko" ? "ko" : "en";
+    const currency = settings.main_currency || DEFAULT_CURRENCY;
+    let i = 0;
+    for (const seed of SEED_CATEGORIES) {
+      batch.push({
+        table: "categories",
+        row: {
+          id: await derivedId(uid, "category:" + seed.slug),
+          name: seed[lang],
+          kind: seed.kind,
+          icon: seed.icon,
+          color: seed.color,
+          archived: false,
+          position: i++,
+          created_at: stamp,
+          deleted_at: null,
+        },
+      });
+    }
+    i = 0;
+    for (const seed of SEED_ACCOUNTS) {
+      batch.push({
+        table: "accounts",
+        row: {
+          id: await derivedId(uid, "account:" + seed.slug),
+          name: seed[lang],
+          kind: seed.kind,
+          currency,
+          opening_minor: 0,
+          color: seed.color,
+          archived: false,
+          position: i++,
+          created_at: stamp,
+          deleted_at: null,
+        },
+      });
+    }
+
+    await putMany(batch);
+  }
+
   // ---------- lifecycle ----------
 
   function onOnline() {
@@ -1211,6 +1290,7 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
     putMany,
     remove,
     restore,
+    resetAll,
     writeSettings,
     sync: () => sync().catch(reportSyncError),
     flush,

@@ -3040,6 +3040,77 @@ function openRates() {
 //  Settings
 // ============================================================
 
+/**
+ * "Start over" — the account back to its first day.
+ *
+ * Counted, not hand-waved: someone about to lose four years of entries and
+ * someone about to lose an afternoon's are owed different amounts of pause,
+ * and the only honest way to give it is to say the number out loud.
+ */
+function resetRow(closeSettings) {
+  return el(
+    "button",
+    {
+      class: "picker danger",
+      type: "button",
+      onClick: async () => {
+        const live = (list) => list.filter((x) => !x.deleted_at).length;
+        const ok = await confirmSheet({
+          title: t("reset.confirm"),
+          body: t(state.local ? "reset.bodyLocal" : "reset.body", {
+            tx: live(state.data.transactions),
+            acc: live(state.data.accounts),
+            cat: live(state.data.categories),
+            bud: live(state.data.budgets),
+          }),
+          confirmLabel: t("reset.confirmLabel"),
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          if (state.local) {
+            // A device-only ledger has nowhere to propagate a tombstone to,
+            // and keeping thousands of them in the cache for no reader is
+            // just clutter. Throw the cache away and let it seed itself,
+            // which is the same first day by a shorter road.
+            closeSettings();
+            state.ledger.close();
+            state.ledger = null;
+            S.forgetDevice(S.LOCAL_UID);
+            // Before attaching, not after: opening the ledger renders, and
+            // rendering the Accounts tab of a ledger that is mid-rebuild is
+            // a flicker nobody asked to see.
+            state.view = "log";
+            attachLedger({ uid: S.LOCAL_UID, local: true });
+            toast(t("reset.done"));
+            return;
+          }
+          await state.ledger.resetAll();
+          closeSettings();
+          // Back to this month: the entry that put us in March is gone, and
+          // an empty March would read as though the reset had missed.
+          state.anchor = M.todayKey();
+          state.view = "log";
+          renderAll();
+          toast(t("reset.done"));
+        } catch (e) {
+          console.error("Reset failed:", e);
+          // The writes are in the outbox and will go up when they can, so
+          // this is "not finished", not "not done".
+          toast(t("reset.failed"), { danger: true });
+        }
+      },
+    },
+    icon("trash"),
+    el(
+      "span",
+      { class: "picker-value stacked" },
+      t("reset.title"),
+      el("span", { class: "help", style: { margin: 0 }, text: t("reset.help") })
+    )
+  );
+}
+
 function openSettings() {
   let sheet = null;
   const build = () => sheet && sheet.rebuild();
@@ -3169,7 +3240,9 @@ function openSettings() {
       );
 
       // --- data ---
-      body.append(
+      // add(), not body.append(): the reset row is null on a device-only
+      // ledger, and native append would write the word "null" here.
+      add(body, [
         section(t("set.data")),
         rowLink(t("set.categories"), null, "list", () => {
           close();
@@ -3199,8 +3272,9 @@ function openSettings() {
             t("set.export"),
             el("span", { class: "help", style: { margin: 0 }, text: t("set.exportHelp") })
           )
-        )
-      );
+        ),
+        resetRow(close),
+      ]);
 
       // --- account ---
       const email = state.session?.user?.email;
@@ -3235,37 +3309,13 @@ function openSettings() {
               text: t("local.signInHelp"),
             })
           : null,
+        // No erase button here any more. "Start over" in Data does exactly
+        // this for a device-only ledger, and two buttons that wipe the same
+        // ledger — in different sections, under different names — is a
+        // question about which one is worse, asked of someone who is
+        // already nervous.
         state.local
-          ? el(
-              "button",
-              {
-                class: "btn btn-ghost danger btn-block",
-                type: "button",
-                style: { marginTop: "10px" },
-                onClick: async () => {
-                  const ok = await confirmSheet({
-                    title: t("local.eraseConfirm"),
-                    body: t("local.eraseBody"),
-                    confirmLabel: t("local.erase"),
-                    danger: true,
-                  });
-                  if (!ok) return;
-                  close();
-                  if (state.ledger) {
-                    state.ledger.close();
-                    state.ledger = null;
-                  }
-                  S.forgetDevice(S.LOCAL_UID);
-                  // Straight back into a brand-new device ledger, which
-                  // seeds itself again — not out to a screen they did not
-                  // ask for.
-                  attachLedger({ uid: S.LOCAL_UID, local: true });
-                  toast(t("local.erased"));
-                },
-              },
-              icon("trash"),
-              t("local.erase")
-            )
+          ? null
           : el(
               "button",
               {

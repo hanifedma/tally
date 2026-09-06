@@ -1544,6 +1544,16 @@ dialog.sheet::backdrop {
 .picker:hover { border-color: var(--border-strong); }
 .picker.invalid { border-color: var(--danger); }
 
+/* The one row in the list that destroys something. Coloured but not
+   filled: it has to be unmistakable among the ordinary rows without
+   reading as the sheet's primary action, which it is the opposite of. */
+.picker.danger { color: var(--danger); }
+.picker.danger .help { color: var(--danger); opacity: 0.75; }
+.picker.danger:hover {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .picker-value {
   flex: 1;
   min-width: 0;
