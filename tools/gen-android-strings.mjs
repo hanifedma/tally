@@ -43,19 +43,75 @@ const deHtml = (s) =>
     .replace(/<\/code>/g, "")
     .replace(/<[^>]+>/g, "");
 
-const keys = Object.keys(ALL_STRINGS[DEFAULT_LANG]);
+// ------------------------------------------------------------
+//  What only the phone says
+//
+//  Almost every string belongs to both apps, which is the whole point of
+//  generating this. A few cannot: one names a file that exists only in this
+//  repo, another names a failure only Credential Manager can have. They live
+//  here rather than in i18n.js so the website is not carrying strings it can
+//  never show — and here rather than pencilled into Strings.kt afterwards,
+//  which is how they got lost the last time this was run.
+// ------------------------------------------------------------
+const ANDROID = {
+  en: {
+    // The web app is edited and reloaded; this one is built.
+    "setup.p1":
+      "Tally is not connected to a database yet. Put your Supabase project URL and anon key into supabase.properties and build the app again.",
+    // Credential Manager can fail before it has shown anything at all — no
+    // Play Services, no accounts on the device, a client id that does not
+    // match the signing key. It reports every one of those as a cancellation.
+    "err.auth.unavailable":
+      "Google wouldn't sign you in. Check this device has a Google account added, and that the app's sign-in setup is complete.",
+  },
+  ko: {
+    "setup.p1":
+      "아직 데이터베이스에 연결되지 않았습니다. Supabase 프로젝트 URL과 anon 키를 supabase.properties에 넣고 앱을 다시 빌드하세요.",
+    "err.auth.unavailable":
+      "Google이 로그인을 거부했습니다. 이 기기에 Google 계정이 추가되어 있는지, 로그인 설정이 완료되었는지 확인해 주세요.",
+  },
+};
+
+/** The web's table with the phone's overrides and additions folded in. */
+const stringsFor = (lang) => ({ ...ALL_STRINGS[lang], ...ANDROID[lang] });
+
+// Android-only keys sort after the shared ones rather than being interleaved,
+// so a diff of this file after a wording change stays readable.
+const keys = [
+  ...Object.keys(ALL_STRINGS[DEFAULT_LANG]),
+  ...Object.keys(ANDROID[DEFAULT_LANG]).filter((k) => !(k in ALL_STRINGS[DEFAULT_LANG])),
+];
+
+// An override for a key the web has since renamed is a string nobody will
+// ever see, sitting in the file looking authoritative.
+for (const lang of LANGS) {
+  if (!ANDROID[lang]) {
+    console.error("No Android overrides for " + lang);
+    process.exit(1);
+  }
+  const stale = Object.keys(ANDROID[lang]).filter(
+    (k) => !(k in ANDROID[DEFAULT_LANG])
+  );
+  if (stale.length) {
+    console.error("Android override in " + lang + " with no " + DEFAULT_LANG + ": " + stale.join(", "));
+    process.exit(1);
+  }
+}
 
 // Fail loudly rather than generate a table with holes in it.
 for (const lang of LANGS) {
-  const missing = keys.filter((k) => ALL_STRINGS[lang][k] == null);
+  const table = stringsFor(lang);
+  const missing = keys.filter((k) => table[k] == null);
   if (missing.length) {
     console.error("Missing " + lang + " strings: " + missing.join(", "));
     process.exit(1);
   }
 }
 
-const table = (lang) =>
-  keys.map((k) => "        " + lit(k) + " to " + lit(deHtml(ALL_STRINGS[lang][k])) + ",").join("\n");
+const table = (lang) => {
+  const strings = stringsFor(lang);
+  return keys.map((k) => "        " + lit(k) + " to " + lit(deHtml(strings[k])) + ",").join("\n");
+};
 
 const source = `package com.hanifedma.tally.i18n
 
@@ -64,8 +120,13 @@ const source = `package com.hanifedma.tally.i18n
 //
 //  Produced from the web app's i18n.js by tools/gen-android-strings.mjs, so
 //  that the phone and the browser cannot disagree about what a button says.
-//  Change the wording there and run the generator; StringsParityTest fails
-//  if this file falls behind.
+//  Change the wording in i18n.js and run the generator again — a few
+//  Android-only strings live in the generator itself, at the top.
+//
+//  Nothing compares this against i18n.js automatically: the web table is
+//  JavaScript and this is a unit test on the JVM. ParityTest checks what it
+//  can from here — that every key exists in both languages and that no
+//  placeholder was lost in translation.
 //
 //  ${keys.length} keys, ${LANGS.length} languages.
 // ============================================================

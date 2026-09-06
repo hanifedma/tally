@@ -350,15 +350,23 @@ a {
   display: block;
 }
 
-/* Where Google renders in the page instead — on an origin it has not been
-   told about, such as a local server — the same containers are ours to
-   correct. The button itself, and the white circle its logo sits in, keep
-   their own colours. */
-.login-btn-slot > div,
-.login-btn-slot > div > div,
-.login-btn-slot > div > div > div:not([role="button"]) {
+/* Google draws its button into that slot as ordinary elements in this
+   document, and paints one of the containers around it white. On a dark page
+   that is a white frame around a black button — the thing this whole rule
+   exists to remove.
+
+   Which container, and how deep, is not ours to know: for an account Google
+   already recognises it renders a wider "Continue as …" button with more
+   wrappers around it than the plain one has, and counting `> div > div` gets
+   the plain button right and that one wrong. So the target is stated by what
+   it is rather than where it sits — every element that *contains* the
+   button. That is exactly the wrapper chain, at any depth, and it can never
+   be the button itself or the white circle its logo sits in, both of which
+   keep their own colours. */
+.login-btn-slot div:has([role="button"]) {
   background: transparent !important;
   box-shadow: none !important;
+  border: 0 !important;
 }
 
 /* A rule with the word centred in the gap, drawn without a background so
@@ -1325,6 +1333,10 @@ dialog.sheet::backdrop {
   color: var(--faint);
   margin: 6px 0 0;
 }
+
+/* The same line, saying the field cannot be read. It replaces the help text
+   rather than appearing under it, so the field never grows a second line. */
+.help.warn { color: var(--warn); }
 
 .error {
   font-size: 12.5px;

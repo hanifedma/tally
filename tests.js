@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=7";
+import * as M from "./money.js?v=8";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -287,6 +287,20 @@ test("what else stops a transaction being saved", () => {
   eq(M.validateTransaction(move, CTX), "tx.needToAccount");
   eq(M.validateTransaction({ ...move, to_account_id: "a1" }, CTX), "tx.sameAccount");
   eq(M.validateTransaction({ ...move, to_account_id: "a2" }, CTX), null);
+
+  // A fee is optional, may be a sum like the amount, and may not be noise.
+  const sending = { ...move, to_account_id: "a2" };
+  eq(M.validateTransaction({ ...sending, fee: "" }, CTX), null, "blank means no fee");
+  eq(M.validateTransaction({ ...sending, fee: "   " }, CTX), null, "so does whitespace");
+  eq(M.validateTransaction({ ...sending, fee: "1000" }, CTX), null);
+  eq(M.validateTransaction({ ...sending, fee: "500+500" }, CTX), null, "a sum is fine");
+  eq(M.validateTransaction({ ...sending, fee: "1,00o" }, CTX), "tx.feeBad");
+  eq(M.validateTransaction({ ...sending, fee: "12+" }, CTX), "tx.feeBad");
+  eq(
+    M.validateTransaction({ ...base, fee: "nonsense" }, CTX),
+    null,
+    "an expense has no fee field, so nothing to reject"
+  );
 });
 
 test("converting between two non-main currencies", () => {
@@ -342,6 +356,51 @@ test("a cross-currency transfer lands the amount that actually arrived", () => {
   eq(b.get("a2"), 50000 + 1142857, "rupiah arrived in the rupiah account");
 });
 
+test("a transfer's fee comes out of the account it was sent from", () => {
+  const rows = [
+    tx({
+      kind: "transfer",
+      amount_minor: 30000,
+      fee_minor: 1000,
+      currency: "KRW",
+      account_id: "a1",
+      to_account_id: "a3",
+    }),
+  ];
+  const b = M.accountBalances(accounts, rows);
+  eq(b.get("a1"), 100000 - 30000 - 1000, "the amount and the fee both left");
+  eq(b.get("a3"), 10000, "the far end receives the amount, not the fee");
+});
+
+test("a fee on a cross-currency transfer is charged in the sending currency", () => {
+  const rows = [
+    tx({
+      kind: "transfer",
+      amount_minor: 100000,
+      fee_minor: 5000,
+      currency: "KRW",
+      account_id: "a1",
+      to_account_id: "a2",
+      to_amount_minor: 1142857,
+    }),
+  ];
+  const b = M.accountBalances(accounts, rows);
+  eq(b.get("a1"), 100000 - 100000 - 5000, "won, because the won account paid it");
+  eq(b.get("a2"), 50000 + 1142857, "the rupiah side is untouched by it");
+});
+
+test("only a transfer can carry a fee", () => {
+  eq(M.normalizeTx({ id: "1", kind: "expense", fee_minor: 900 }).fee_minor, 0);
+  eq(M.normalizeTx({ id: "1", kind: "income", fee_minor: 900 }).fee_minor, 0);
+  eq(M.normalizeTx({ id: "1", kind: "transfer", to_account_id: "a2", fee_minor: 900 }).fee_minor, 900);
+  eq(M.normalizeTx({ id: "1", kind: "transfer", to_account_id: "a2" }).fee_minor, 0, "absent is none");
+  eq(
+    M.normalizeTx({ id: "1", kind: "transfer", to_account_id: "a2", fee_minor: -5 }).fee_minor,
+    0,
+    "a negative fee is not a refund"
+  );
+});
+
 test("a transfer is neither income nor spending", () => {
   const rows = [
     tx({ kind: "income", amount_minor: 1832726, currency: "KRW", account_id: "a1" }),
@@ -352,6 +411,75 @@ test("a transfer is neither income nor spending", () => {
   eq(totals.income, 1832726);
   eq(totals.expense, 260452);
   eq(totals.net, 1832726 - 260452);
+});
+
+test("a transfer's fee is spending, even though the transfer is not", () => {
+  const rows = [
+    tx({ kind: "expense", amount_minor: 10000, currency: "KRW", account_id: "a1" }),
+    tx({
+      kind: "transfer",
+      amount_minor: 500000,
+      fee_minor: 1500,
+      currency: "KRW",
+      account_id: "a1",
+      to_account_id: "a3",
+    }),
+  ];
+  const totals = M.totals(rows, CTX);
+  eq(totals.income, 0);
+  eq(totals.expense, 11500, "the fee joined the expenses; the 500,000 did not");
+
+  // The breakdown under the number has to reach the same number, or the
+  // month's donut and the month's total disagree on screen.
+  const { rows: slices, total } = M.byCategory(rows, "expense", CTX);
+  eq(total, totals.expense);
+  const fee = slices.find((s) => s.category_id === M.FEE_CATEGORY);
+  eq(fee.amount, 1500);
+
+  // And so does the day it happened on.
+  const days = M.groupByDay(rows, CTX);
+  eq(days.length, 1);
+  eq(days[0].expense, 11500);
+});
+
+test("a fee counts against the overall budget and against no category", () => {
+  const budgets = [
+    M.normalizeBudget({ id: "b-all", category_id: null, amount_minor: 100000, currency: "KRW" }),
+    M.normalizeBudget({ id: "b-cat", category_id: "c1", amount_minor: 100000, currency: "KRW" }),
+  ];
+  const rows = [
+    tx({ kind: "expense", amount_minor: 20000, currency: "KRW", account_id: "a1", category_id: "c1" }),
+    tx({
+      kind: "transfer",
+      amount_minor: 900000,
+      fee_minor: 2500,
+      currency: "KRW",
+      account_id: "a1",
+      to_account_id: "a3",
+    }),
+  ];
+  const progress = M.budgetProgress(budgets, rows, [], CTX);
+  const overall = progress.find((p) => !p.category_id);
+  const perCat = progress.find((p) => p.category_id === "c1");
+  eq(overall.spent, 22500, "the fee is part of the month's spending");
+  eq(perCat.spent, 20000, "but belongs to no category, so it lands in none");
+});
+
+test("a fee in another currency converts through the row's own frozen rate", () => {
+  const rows = [
+    tx({
+      kind: "transfer",
+      amount_minor: 1000000,
+      fee_minor: 20000,
+      currency: "IDR",
+      rate: 0.0875,
+      rate_base: "KRW",
+      account_id: "a2",
+      to_account_id: "a1",
+    }),
+  ];
+  // 20,000 IDR × 0.0875 = 1,750 KRW.
+  eq(M.totals(rows, CTX).expense, 1750);
 });
 
 test("net worth converts every account into one currency", () => {
@@ -569,6 +697,21 @@ test("the CSV carries both what was paid and what it was worth", () => {
   const line = M.toCsv(rows, { accounts, categories: [], ctx: CTX }).split("\r\n")[1];
   assert(line.includes(",IDR,118200,"), "the original amount, in its own currency");
   assert(line.endsWith("," + Math.round(118200 * 0.0875)), "and its value in won");
+});
+
+test("the CSV's main-currency column holds a transfer's fee and nothing else", () => {
+  const rows = [
+    tx({ id: "1", kind: "transfer", amount_minor: 500000, fee_minor: 1500, currency: "KRW",
+         account_id: "a1", to_account_id: "a3" }),
+    tx({ id: "2", kind: "transfer", amount_minor: 500000, currency: "KRW",
+         account_id: "a1", to_account_id: "a3" }),
+  ];
+  const lines = M.toCsv(rows, { accounts, categories: [], ctx: CTX }).split("\r\n");
+  eq(lines[0].split(",").indexOf("fee"), 9, "the fee sits next to the amount it was charged on");
+  const withFee = lines.find((l) => l.endsWith(",500000,1500,1,1500"));
+  const without = lines.find((l) => l.endsWith(",500000,,1,"));
+  assert(withFee, "the fee is charged, and counted: " + lines.join(" | "));
+  assert(without, "no fee, so nothing in either column: " + lines.join(" | "));
 });
 
 // ------------------------------------------------------------

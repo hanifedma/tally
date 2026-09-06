@@ -60,6 +60,17 @@ export const CURRENCIES = {
 export const CURRENCY_CODES = Object.keys(CURRENCIES);
 export const DEFAULT_CURRENCY = "KRW";
 
+/**
+ * The bucket transfer fees are gathered under in a spending breakdown.
+ *
+ * A fee is spending — the bank kept that money — but it belongs to no
+ * category, and there is no category to make it belong to. Filing it under
+ * "uncategorised" would answer "where did it go?" with a shrug, so it gets
+ * its own slice. Ids everywhere else are UUIDs, so this cannot collide with
+ * a real one.
+ */
+export const FEE_CATEGORY = "__fee";
+
 /** Currencies whose symbol reads better after the number than before it. */
 const SUFFIX_SYMBOL = new Set(["SEK", "NOK", "DKK", "PLN", "VND"]);
 
@@ -333,6 +344,18 @@ export function toMain(tx, ctx) {
 }
 
 /**
+ * A transfer's fee in the main currency; zero for everything else.
+ *
+ * The fee is charged in the sending account's currency, which is the row's
+ * own, so it converts through the row's own frozen rate — the same rate, and
+ * the same day, as the amount it was charged on.
+ */
+export function feeToMain(tx, ctx) {
+  if (tx.kind !== "transfer" || !tx.fee_minor) return 0;
+  return toMain({ ...tx, amount_minor: tx.fee_minor }, ctx);
+}
+
+/**
  * The rate to freeze on a row being written now: what one unit of `code` is
  * worth in the current main currency. Falls back to 1 for an unknown pair,
  * which keeps the row storable — the app flags the missing rate in the UI
@@ -525,6 +548,9 @@ export function normalizeTx(raw) {
       kind === "transfer" && r.to_amount_minor != null
         ? Math.max(0, intOr(r.to_amount_minor, 0))
         : null,
+    // What the bank kept, in `currency` — the sending account's. Only a
+    // transfer can carry one; on anything else the fee *is* the amount.
+    fee_minor: kind === "transfer" ? Math.max(0, intOr(r.fee_minor, 0)) : 0,
     category_id: kind === "transfer" ? null : r.category_id || null,
     note: clampStr(r.note, 280, ""),
     occurred_on: isDayKey(r.occurred_on) ? r.occurred_on : todayKey(),
@@ -605,6 +631,12 @@ export function indexById(rows) {
  * exception is a transfer between accounts of different currencies, which
  * carries what actually landed in `to_amount_minor`.
  *
+ * A transfer's fee comes out of the sending account on top of the amount,
+ * because that is what a bank does: ₩100,000 moved with a ₩1,000 fee leaves
+ * ₩101,000 behind. Someone whose bank takes the fee out of the money being
+ * sent instead records the smaller number as the amount — the amount is
+ * what moved, and the fee is what nobody received.
+ *
  * @returns Map of account id → balance in minor units
  */
 export function accountBalances(accounts, transactions) {
@@ -617,7 +649,9 @@ export function accountBalances(accounts, transactions) {
     } else if (t.kind === "expense") {
       if (out.has(t.account_id)) out.set(t.account_id, out.get(t.account_id) - t.amount_minor);
     } else {
-      if (out.has(t.account_id)) out.set(t.account_id, out.get(t.account_id) - t.amount_minor);
+      if (out.has(t.account_id)) {
+        out.set(t.account_id, out.get(t.account_id) - t.amount_minor - (t.fee_minor || 0));
+      }
       if (out.has(t.to_account_id)) {
         const landed = t.to_amount_minor != null ? t.to_amount_minor : t.amount_minor;
         out.set(t.to_account_id, out.get(t.to_account_id) + landed);
@@ -634,6 +668,11 @@ export function accountBalances(accounts, transactions) {
  * money between your own accounts is not income and not spending, and the
  * reference app counting it as both is exactly why its monthly totals never
  * matched the bank.
+ *
+ * Their fees are not. A fee is not your money changing pockets, it is your
+ * money going to the bank, and leaving it out would be the same mistake in
+ * the other direction: net worth would fall by an amount that appears in no
+ * total and nothing on screen would say why.
  */
 export function totals(transactions, ctx) {
   let income = 0;
@@ -641,6 +680,7 @@ export function totals(transactions, ctx) {
   for (const t of transactions) {
     if (t.kind === "income") income += toMain(t, ctx);
     else if (t.kind === "expense") expense += toMain(t, ctx);
+    else expense += feeToMain(t, ctx);
   }
   return { income, expense, net: income - expense };
 }
@@ -669,6 +709,16 @@ export function byCategory(transactions, kind, ctx) {
   const sums = new Map();
   let total = 0;
   for (const t of transactions) {
+    // Fees are spending, so the expense breakdown has to hold them or it
+    // stops adding up to the expense total sitting above it.
+    if (kind === "expense" && t.kind === "transfer") {
+      const fee = feeToMain(t, ctx);
+      if (fee) {
+        sums.set(FEE_CATEGORY, (sums.get(FEE_CATEGORY) || 0) + fee);
+        total += fee;
+      }
+      continue;
+    }
     if (t.kind !== kind) continue;
     const v = toMain(t, ctx);
     const key = t.category_id || "";
@@ -706,6 +756,13 @@ export function budgetProgress(budgets, transactions, categories, ctx) {
   const spentByCat = new Map();
   let spentTotal = 0;
   for (const t of transactions) {
+    // A fee counts against the month's overall budget, the same as it counts
+    // in the month's expenses. It belongs to no category, so it counts
+    // against no per-category one.
+    if (t.kind === "transfer") {
+      spentTotal += feeToMain(t, ctx);
+      continue;
+    }
     if (t.kind !== "expense") continue;
     const v = toMain(t, ctx);
     spentTotal += v;
@@ -757,6 +814,7 @@ export function groupByDay(transactions, ctx) {
     day.items.push(t);
     if (t.kind === "income") day.income += toMain(t, ctx);
     else if (t.kind === "expense") day.expense += toMain(t, ctx);
+    else day.expense += feeToMain(t, ctx);
   }
   const out = [...days.values()];
   out.sort((a, b) => (a.key < b.key ? 1 : -1));
@@ -824,7 +882,7 @@ export function toCsv(transactions, { accounts, categories, ctx }) {
 
   const head = [
     "date", "time", "type", "category", "account", "to_account",
-    "note", "currency", "amount", "rate", main.toLowerCase() + "_value",
+    "note", "currency", "amount", "fee", "rate", main.toLowerCase() + "_value",
   ];
   const rows = [head];
 
@@ -841,8 +899,14 @@ export function toCsv(transactions, { accounts, categories, ctx }) {
       t.note,
       t.currency,
       minorToInput(t.amount_minor, t.currency),
+      t.fee_minor ? minorToInput(t.fee_minor, t.currency) : "",
       t.rate,
-      t.kind === "transfer" ? "" : minorToInput(toMain(t, ctx), main),
+      // A transfer moved nothing in or out, so it has no value in this
+      // column — except the part of it the bank kept, which is spending
+      // and has to be here for the column to add up to the month's.
+      t.kind === "transfer"
+        ? (t.fee_minor ? minorToInput(feeToMain(t, ctx), main) : "")
+        : minorToInput(toMain(t, ctx), main),
     ]);
   }
 
@@ -865,7 +929,7 @@ export function toCsv(transactions, { accounts, categories, ctx }) {
 
 /**
  * @param draft  the editor's working copy: { kind, amount (text), currency,
- *               account_id, to_account_id, category_id }
+ *               account_id, to_account_id, category_id, fee (text) }
  * @param ctx    { main_currency, rates }
  * @returns null when it can be saved, otherwise a translation key naming
  *          the first thing wrong with it.
@@ -879,6 +943,13 @@ export function validateTransaction(draft, ctx) {
   if (draft.kind === "transfer") {
     if (!draft.to_account_id) return "tx.needToAccount";
     if (draft.to_account_id === draft.account_id) return "tx.sameAccount";
+    // Blank is the ordinary case and means no fee. Anything typed has to
+    // be a number, though — silently reading "1,00o" as nothing would hide
+    // money from every total that follows.
+    const feeText = String(draft.fee == null ? "" : draft.fee).trim();
+    if (feeText) {
+      if (parseAmountToMinor(feeText, draft.currency) === null) return "tx.feeBad";
+    }
   } else if (!draft.category_id) {
     return "tx.needCategory";
   }

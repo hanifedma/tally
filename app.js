@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=7";
-import * as S from "./store.js?v=7";
-import * as M from "./money.js?v=7";
+} from "./supabase-config.js?v=8";
+import * as S from "./store.js?v=8";
+import * as M from "./money.js?v=8";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=7";
+} from "./i18n.js?v=8";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -1127,9 +1127,13 @@ function renderTxRow(tx) {
   const amountClass = isTransfer ? "move" : tx.kind === "income" ? "in" : "out";
   const sign = isTransfer ? "" : tx.kind === "income" ? "+" : "−";
   const primary = sign + fmt(tx.amount_minor, tx.currency, { sign: "never" });
-  // The converted figure only earns its line when it says something new.
-  const alt =
-    !isTransfer && tx.currency !== c.main_currency
+  // The converted figure only earns its line when it says something new —
+  // and on a transfer the one thing worth saying is what it cost.
+  const alt = isTransfer
+    ? tx.fee_minor
+      ? t("tx.feeOf", { amount: fmt(tx.fee_minor, tx.currency, { sign: "never" }) })
+      : null
+    : tx.currency !== c.main_currency
       ? t("tx.converted", { amount: fmt(M.toMain(tx, c)) })
       : null;
 
@@ -1291,7 +1295,13 @@ function renderDonut(slices, total, side) {
 
   const legend = el("div", { class: "legend" });
   for (const slice of slices.slice(0, 12)) {
-    const cat = catById(slice.category_id);
+    const isFee = slice.category_id === M.FEE_CATEGORY;
+    const cat = isFee ? null : catById(slice.category_id);
+    const name = isFee
+      ? "🏦  " + t("tx.fees")
+      : cat
+        ? cat.icon + "  " + cat.name
+        : t("log.uncategorised");
     legend.append(
       el(
         "button",
@@ -1305,7 +1315,7 @@ function renderDonut(slices, total, side) {
           },
         },
         el("span", { class: "swatch", style: { background: cat ? colorVar(cat.color) : "var(--c-gray)" } }),
-        el("span", { class: "legend-name", text: cat ? cat.icon + "  " + cat.name : t("log.uncategorised") }),
+        el("span", { class: "legend-name", text: name }),
         el("span", { class: "legend-share", text: formatPercent(slice.share) }),
         el("span", { class: "legend-amount", text: fmt(slice.amount) })
       )
@@ -1630,11 +1640,18 @@ function openTransaction(existing) {
   }
 
   const draft = existing
-    ? { ...existing, amount: M.minorToInput(existing.amount_minor, existing.currency) }
+    ? {
+        ...existing,
+        amount: M.minorToInput(existing.amount_minor, existing.currency),
+        // Text, like the amount: blank means no fee, so an untouched
+        // transfer does not come back reading "0".
+        fee: existing.fee_minor ? M.minorToInput(existing.fee_minor, existing.currency) : "",
+      }
     : {
         id: M.uuid(),
         kind: "expense",
         amount: "",
+        fee: "",
         currency: accounts[0].currency,
         rate: M.rateForNew(accounts[0].currency, c),
         rate_base: c.main_currency,
@@ -1712,6 +1729,7 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
           } else {
             draft.to_account_id = null;
             draft.to_amount_minor = null;
+            draft.fee = "";
             // A category from the other side of the ledger would be wrong.
             const cat = catById(draft.category_id);
             if (!cat || cat.kind !== kind) draft.category_id = null;
@@ -1916,6 +1934,36 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
         getError() === "tx.needToAccount" || getError() === "tx.sameAccount"
       )
     );
+    // What the bank kept. Blank almost always, so it is one short field
+    // rather than a section: a transfer that cost nothing should not have
+    // to say so.
+    const feeInput = el("input", {
+      class: "input num",
+      type: "text",
+      inputmode: "decimal",
+      style: { textAlign: "right" },
+      value: draft.fee || "",
+      placeholder: M.minorToInput(0, currency),
+    });
+    feeInput.addEventListener("input", () => {
+      draft.fee = feeInput.value;
+      setError(null);
+    });
+    const feeMinor = M.parseAmountToMinor(draft.fee || "", currency);
+    const feeBad = String(draft.fee || "").trim() !== "" && feeMinor === null;
+    body.append(
+      el(
+        "div",
+        { class: "field" },
+        el("span", { class: "field-label", text: t("tx.fee") + " · " + currency }),
+        feeInput,
+        el("p", {
+          class: "help" + (feeBad ? " warn" : ""),
+          text: feeBad ? t("tx.feeBad") : t("tx.feeHelp"),
+        })
+      )
+    );
+
     // Only cross-currency transfers need to say what landed.
     if (account && toAccount && account.currency !== toAccount.currency) {
       const landedInput = el("input", {
@@ -1950,6 +1998,11 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
           el("p", { class: "help", text: t("tx.receivesHelp") })
         )
       );
+    } else {
+      // The field is gone, so what was typed into it must go too. Leaving it
+      // on the draft would send a number of dollars into a won account and
+      // there would be nothing on screen saying where it came from.
+      draft.to_amount_minor = null;
     }
   }
 
@@ -2103,6 +2156,7 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
       draft.id = M.uuid();
       draft.amount = "";
       draft.note = "";
+      draft.fee = "";
       draft.to_amount_minor = null;
       draft.occurred_min = M.minuteOfDay();
       rerender();
@@ -2171,6 +2225,10 @@ function commit(draft) {
     account_id: draft.account_id,
     to_account_id: draft.kind === "transfer" ? draft.to_account_id : null,
     to_amount_minor: draft.kind === "transfer" ? draft.to_amount_minor : null,
+    fee_minor:
+      draft.kind === "transfer"
+        ? M.parseAmountToMinor(draft.fee || "", draft.currency) || 0
+        : 0,
     category_id: draft.kind === "transfer" ? null : draft.category_id,
     note: (draft.note || "").trim().slice(0, 280),
     occurred_on: draft.occurred_on,

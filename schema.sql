@@ -141,6 +141,10 @@ create table if not exists public.transactions (
   -- transfer only, and only when the two accounts hold different currencies:
   -- what actually landed, in minor units of the destination's currency.
   to_amount_minor bigint,
+  -- transfer only: what the bank kept, in minor units of `currency` — the
+  -- sending account's. It leaves that account on top of amount_minor and
+  -- counts as spending, because it is money that went to someone else.
+  fee_minor       bigint      not null default 0,
 
   category_id     uuid references public.categories(id) on delete set null,
   note            text        not null default '',
@@ -155,14 +159,16 @@ create table if not exists public.transactions (
   constraint transactions_kind_known     check (kind in ('expense', 'income', 'transfer')),
   constraint transactions_amount_positive check (amount_minor >= 0),
   constraint transactions_to_amount_positive check (to_amount_minor is null or to_amount_minor >= 0),
+  constraint transactions_fee_positive check (fee_minor >= 0),
   constraint transactions_rate_positive  check (rate > 0),
   constraint transactions_min_range      check (occurred_min between 0 and 1439),
   constraint transactions_note_length    check (char_length(note) <= 280),
   constraint transactions_currency_shape check (currency ~ '^[A-Z]{3}$'),
-  -- A transfer needs somewhere to go, and only a transfer may have one.
+  -- A transfer needs somewhere to go, and only a transfer may have one — or
+  -- a landed amount, or a fee.
   constraint transactions_transfer_shape check (
     (kind = 'transfer' and to_account_id is not null and category_id is null)
-    or (kind <> 'transfer' and to_account_id is null and to_amount_minor is null)
+    or (kind <> 'transfer' and to_account_id is null and to_amount_minor is null and fee_minor = 0)
   ),
   -- Moving money to the account it is already in is not a transfer.
   constraint transactions_transfer_distinct check (
@@ -197,6 +203,37 @@ create unique index if not exists budgets_one_per_category
 create unique index if not exists budgets_one_total
   on public.budgets (user_id)
   where category_id is null and deleted_at is null;
+
+-- ------------------------------------------------------------
+--  Changes to a database that already exists
+--
+--  `create table if not exists` above does nothing at all to a table that is
+--  already there — not even to add a column to it. So anything added to
+--  `transactions` after the first release has to be stated twice: once in
+--  the table above, for a new project, and once here, for yours.
+--
+--  Everything in this section is idempotent and safe on a full ledger.
+-- ------------------------------------------------------------
+alter table public.transactions add column if not exists fee_minor bigint not null default 0;
+
+-- Dropped and restated rather than guarded: `add constraint` has no
+-- `if not exists`, and transfer_shape gained a clause, so a database that
+-- already has the old version needs the old version gone.
+alter table public.transactions drop constraint if exists transactions_fee_positive;
+alter table public.transactions
+  add constraint transactions_fee_positive check (fee_minor >= 0);
+
+alter table public.transactions drop constraint if exists transactions_transfer_shape;
+alter table public.transactions add constraint transactions_transfer_shape check (
+  (kind = 'transfer' and to_account_id is not null and category_id is null)
+  or (kind <> 'transfer' and to_account_id is null and to_amount_minor is null and fee_minor = 0)
+);
+
+-- PostgREST answers from a cached picture of the schema, and a column it has
+-- not heard of is rejected with PGRST204 rather than written. Supabase
+-- usually reloads on its own; asking costs nothing and closes the window in
+-- which the apps would see every save refused.
+notify pgrst, 'reload schema';
 
 -- ------------------------------------------------------------
 --  Indexes — every query this app makes, and no more

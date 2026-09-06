@@ -188,27 +188,37 @@ if (front === "login") {
       'document.querySelector("#googleSlot iframe") ? "iframe" : "in the page"'
     )
   );
-  // The iframe's document is painted white by Google and sized to the width
-  // it was asked for, not to the button. Square white corners on a dark page
-  // are what that looks like, so the slot has to round them off.
-  check(
-    "and the slot rounds off what Google paints inside it",
-    await evalIn(`(() => {
-      const s = getComputedStyle(document.getElementById("googleSlot"));
-      return s.overflow === "hidden" && parseFloat(s.borderRadius) >= 20;
-    })()`)
-  );
-  // Where it renders in the page, none of its own wrappers may be painted.
+  // Google paints one of the containers around its button white, which on a
+  // dark page is a white frame around a black button. How deep that
+  // container sits depends on which button it drew — the plain one, or the
+  // wider "Continue as …" it uses for an account it recognises — so what is
+  // checked here is every ancestor of the button, at any depth, and not a
+  // fixed `> div > div`, which was right for one of them and wrong for the
+  // other. The button itself and the circle its logo sits in are excluded by
+  // construction: neither contains the button.
   check(
     "with nothing painted around it",
     await evalIn(`(() => {
-      const bad = [...document.querySelectorAll("#googleSlot > div, #googleSlot > div > div")]
+      const bad = [...document.querySelectorAll('#googleSlot div:has([role="button"])')]
         .map(n => getComputedStyle(n).backgroundColor)
         .filter(bg => bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent");
       return bad.length === 0 ? true : bad.join();
     })()`) === true,
     await evalIn(
-      '[...document.querySelectorAll("#googleSlot > div, #googleSlot > div > div")].map(n => getComputedStyle(n).backgroundColor).join() || "no wrappers"'
+      `[...document.querySelectorAll('#googleSlot div:has([role="button"])')].map(n => getComputedStyle(n).backgroundColor).join() || "no wrappers"`
+    )
+  );
+  // And it is drawn in the app's language, which only the script's URL can
+  // say: renderButton takes a `locale`, and the build Google serves accepts
+  // it and ignores it in favour of a guess from the address you connected
+  // from. This fails on a machine whose Google guess happens to match the
+  // app's language — which is the ordinary case for an English one, so the
+  // check is worth more when it is run from somewhere else.
+  check(
+    "in the language the app is in",
+    await evalIn(`[...document.scripts].some(s => s.src.includes("gsi/client?hl="))`),
+    await evalIn(
+      '[...document.scripts].map(s => s.src).filter(s => s.includes("gsi/client")).join() || "no script"'
     )
   );
 }
@@ -450,9 +460,9 @@ await sleep(800);
 check("light theme applied", (await evalIn('document.documentElement.getAttribute("data-theme")')) === "light");
 check("the selected tab stands on its track, not in it (light)", await segLifted(),
   await segColours());
-await shot("log-light");
-await evalIn('document.getElementById("btnTheme").click()');
-await sleep(700);
+
+// Korean goes on top of light rather than beside it. Both are the same
+// screen, and the README does not need it twice.
 
 // A starter category the app named and nobody renamed. "KB Bank" is not one
 // of ours, so it must come through the switch untouched.
@@ -472,10 +482,13 @@ check(
 );
 check("starter names we wrote follow the language", (await named("식비")) && (await named("현금")));
 check("a name the person chose is left alone", await named("KB Bank"));
-await shot("log-korean");
+await shot("log-korean-light");
 await evalIn('document.getElementById("btnLang").click()');
 await sleep(900);
 check("and follow it back", (await named("Food")) && (await named("Cash")));
+await evalIn('document.getElementById("btnTheme").click()');
+await sleep(700);
+check("and so does the theme", (await evalIn('document.documentElement.getAttribute("data-theme")')) === "dark");
 
 await viewport(1280, 860, 2);
 await sleep(700);

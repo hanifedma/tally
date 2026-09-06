@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=7";
+} from "./supabase-config.js?v=8";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -44,7 +44,7 @@ import {
   startersMayFollow,
   starterRename,
   DEFAULT_CURRENCY,
-} from "./money.js?v=7";
+} from "./money.js?v=8";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.
@@ -109,18 +109,34 @@ export async function getClient() {
 // ------------------------------------------------------------
 
 let gisPromise = null;
+/** Which language the loaded script was fetched for. See below. */
+let gisLocale = null;
 
 /** Load Google Identity Services. Resolves false if it cannot be reached. */
-export function loadGoogleIdentity() {
+export function loadGoogleIdentity(locale = "en") {
   if (!hasGoogleClientId) return Promise.resolve(false);
-  if (gisPromise) return gisPromise;
+  if (gisPromise && gisLocale === locale) return gisPromise;
+  gisLocale = locale;
   gisPromise = new Promise((resolve) => {
-    if (globalThis.google && globalThis.google.accounts && globalThis.google.accounts.id) {
-      resolve(true);
-      return;
+    // The button's language is carried by this URL and by nothing else.
+    // `renderButton` takes a `locale` and documents it; the build Google
+    // is serving accepts it and ignores it — ask for Korean, or for
+    // English, and both come back in whatever language Google guessed from
+    // the address you connected from. So the script is what says it, which
+    // also means a change of language is a second fetch: a second copy
+    // alongside the first re-localises nothing, so the first one goes, and
+    // the namespace it defined goes with it.
+    for (const s of [...document.scripts]) {
+      if (s.src.startsWith(GIS_SRC)) s.remove();
     }
+    try {
+      delete globalThis.google.accounts;
+    } catch {
+      // Never loaded, which is the ordinary case on the first call.
+    }
+
     const s = document.createElement("script");
-    s.src = GIS_SRC;
+    s.src = GIS_SRC + "?hl=" + encodeURIComponent(locale);
     s.async = true;
     s.defer = true;
     s.onload = () => resolve(Boolean(globalThis.google?.accounts?.id));
@@ -142,7 +158,7 @@ export function loadGoogleIdentity() {
  * proof, not a claim.
  */
 export async function renderGoogleButton(el, { locale = "en", dark = true, onSignIn, onError }) {
-  const ready = await loadGoogleIdentity();
+  const ready = await loadGoogleIdentity(locale);
   if (!ready) return false;
   const gid = globalThis.google.accounts.id;
   try {
