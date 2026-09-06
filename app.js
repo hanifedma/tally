@@ -693,13 +693,6 @@ function renderLogin() {
   show($("login"), true);
   $("loginH1").textContent = t("login.h1");
   $("loginSub").textContent = t("login.sub");
-  $("loginPrivacy").textContent = t("login.privacy");
-  $("lf1").textContent = t("login.f1");
-  $("lf1s").textContent = t("login.f1sub");
-  $("lf2").textContent = t("login.f2");
-  $("lf2s").textContent = t("login.f2sub");
-  $("lf3").textContent = t("login.f3");
-  $("lf3s").textContent = t("login.f3sub");
   $("loginWait").textContent = t("login.wait");
   $("loginOr").textContent = t("login.or");
   $("loginLocal").textContent = t("login.local");
@@ -713,6 +706,9 @@ function renderLogin() {
   themeBtn.title = t("theme.toggle");
   themeBtn.onclick = () => {
     applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light");
+    // The Google button is painted by Google in one theme or the other and
+    // cannot be restyled afterwards, so it has to be asked for again.
+    loginRendered = false;
     renderLogin();
   };
 
@@ -741,6 +737,7 @@ function renderLogin() {
 
   S.renderGoogleButton($("googleSlot"), {
     locale: getLang(),
+    dark: document.documentElement.getAttribute("data-theme") !== "light",
     onSignIn: () => show($("loginError"), false),
     onError: () => showLoginError(t("err.auth.generic")),
   })

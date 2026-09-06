@@ -141,7 +141,7 @@ export function loadGoogleIdentity() {
  * audience — before any session exists. What crosses this boundary is a
  * proof, not a claim.
  */
-export async function renderGoogleButton(el, { locale = "en", onSignIn, onError }) {
+export async function renderGoogleButton(el, { locale = "en", dark = true, onSignIn, onError }) {
   const ready = await loadGoogleIdentity();
   if (!ready) return false;
   const gid = globalThis.google.accounts.id;
@@ -169,17 +169,17 @@ export async function renderGoogleButton(el, { locale = "en", onSignIn, onError 
     el.innerHTML = "";
     gid.renderButton(el, {
       type: "standard",
-      // Light in both themes, and not a choice about taste.
+      // Follows the app's theme.
       //
-      // On a registered origin Google renders this into an iframe whose
-      // document it paints white, sized to the width asked for rather than
-      // to the button inside it. A dark button in there is a black pill in
-      // a white box — and for an account Google already knows, where the
-      // pill is wider and the box wider still, a black pill in a white
-      // frame. `outline` is white too, so the box and the button are the
-      // same colour and the seam disappears, whatever width Google picks.
-      // The stylesheet rounds the slot off to match.
-      theme: "outline",
+      // This used to be pinned to `outline` — white in both themes —
+      // because Google rendered the button into an iframe whose document it
+      // painted white, so a dark button sat in a white box and the least
+      // bad answer was to make the button white too and hide the seam.
+      // That is no longer how it renders: the button is ordinary DOM in
+      // this page now, and the only iframe left is a 0×0 helper. Nothing
+      // paints white behind it any more, so pinning it white only put a
+      // white slab on a black page.
+      theme: dark ? "filled_black" : "outline",
       size: "large",
       shape: "pill",
       text: "continue_with",
