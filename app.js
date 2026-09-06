@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=8";
-import * as S from "./store.js?v=8";
-import * as M from "./money.js?v=8";
+} from "./supabase-config.js?v=9";
+import * as S from "./store.js?v=9";
+import * as M from "./money.js?v=9";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=8";
+} from "./i18n.js?v=9";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -2512,7 +2512,7 @@ function openAccount(existing) {
           class: "btn btn-primary",
           type: "button",
           text: t("save"),
-          onClick: () => {
+          onClick: async () => {
             const name = draft.name.trim();
             if (!name) {
               errorNode.textContent = t("acc.name");
@@ -2537,6 +2537,37 @@ function openAccount(existing) {
             // A starting balance can be negative — that is what a credit
             // card is — so take the sign from what was typed.
             const signed = /^\s*[-−]/.test(draft.opening || "") ? -opening : opening;
+
+            // Changing the currency of an account that already holds money
+            // does not convert anything: a balance adds minor units on the
+            // promise that a transaction is always in its account's
+            // currency, so ₩500,000 relabelled as rupiah becomes Rp500,000
+            // and the rows underneath still say ₩. Sometimes that is exactly
+            // what someone wants — they filed a month under the wrong flag —
+            // so it is a question rather than a refusal, asked with the two
+            // numbers in it.
+            if (existing && existing.currency !== draft.currency) {
+              const filed = state.data.transactions.filter(
+                (x) => x.account_id === existing.id || x.to_account_id === existing.id
+              ).length;
+              if (filed > 0) {
+                const bal = M.accountBalances(state.data.accounts, state.data.transactions).get(existing.id) || 0;
+                const ok = await confirmSheet({
+                  title: t("acc.currencyConfirm", { to: draft.currency }),
+                  body: t("acc.currencyBody", {
+                    n: filed,
+                    from: existing.currency,
+                    to: draft.currency,
+                    was: fmt(bal, existing.currency),
+                    now: fmt(bal, draft.currency),
+                  }),
+                  confirmLabel: t("acc.currencyKeep"),
+                  danger: true,
+                });
+                if (!ok) return;
+              }
+            }
+
             state.ledger.put("accounts", {
               id: draft.id,
               name,

@@ -1051,16 +1051,28 @@ export const SEED_ACCOUNTS = [
  * Only while the ledger is still exactly what the app put there. An account's
  * currency stops being a preference the instant an amount is filed under it:
  * `accountBalances` adds minor units without converting, on the promise that
- * a transaction is always in its account's currency. Transactions are counted
- * including tombstones, because a delete can still be undone.
+ * a transaction is always in its account's currency.
  *
- * @param accounts         every account row, tombstones included
- * @param transactionCount how many transaction rows exist at all
- * @param starterIds       the ids this account would derive for its starters
- * @param from             the currency they must all still be in
+ * Live transactions, not every row ever written. This used to count
+ * tombstones too, on the grounds that a delete can be undone — and the price
+ * was that "Start over" broke this rule for good. A reset does not remove
+ * rows, it buries them, so the ledger the person is looking at is empty while
+ * the count behind it never returns to zero: they set the currency to rupiah
+ * and the starting accounts stayed in won, with nothing on screen explaining
+ * why. The undo it was protecting cannot reach this anyway — the toast
+ * offering it is gone in four seconds, and changing the main currency means
+ * opening settings and picking from a list.
+ *
+ * The rows come in whole rather than pre-counted, so that which of them
+ * count is decided here, where it is tested, and not by each caller.
+ *
+ * @param accounts      every account row, tombstones included
+ * @param transactions  every transaction row, tombstones included
+ * @param starterIds    the ids this account would derive for its starters
+ * @param from          the currency they must all still be in
  */
-export function startersMayFollow(accounts, transactionCount, starterIds, from) {
-  if (transactionCount > 0) return false;
+export function startersMayFollow(accounts, transactions, starterIds, from) {
+  if (transactions.some((t) => !t.deleted_at)) return false;
   const live = accounts.filter((a) => !a.deleted_at);
   if (!live.length) return false;
   return live.every((a) => starterIds.has(a.id) && a.currency === from && a.opening_minor === 0);

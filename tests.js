@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=8";
+import * as M from "./money.js?v=9";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -759,31 +759,49 @@ test("the seed set covers both sides of the ledger and has no duplicate slugs", 
 const starterAccount = (over) =>
   M.normalizeAccount({ id: "s1", currency: "KRW", opening_minor: 0, ...over });
 
+const buried = (over) =>
+  tx({ amount_minor: 12000, deleted_at: "2026-01-01T00:00:00Z", ...over });
+
 test("empty starter accounts may follow the main currency", () => {
   const ids = new Set(["s1", "s2"]);
-  eq(M.startersMayFollow([starterAccount({}), starterAccount({ id: "s2" })], 0, ids, "KRW"), true);
+  eq(M.startersMayFollow([starterAccount({}), starterAccount({ id: "s2" })], [], ids, "KRW"), true);
 });
 
 test("accounts stop following the moment the ledger means something", () => {
   const ids = new Set(["s1"]);
   // One transaction anywhere is enough: an amount is filed in this currency.
-  eq(M.startersMayFollow([starterAccount({})], 1, ids, "KRW"), false);
+  eq(M.startersMayFollow([starterAccount({})], [tx({ amount_minor: 1 })], ids, "KRW"), false);
   // An opening balance is money too, even with no transactions.
-  eq(M.startersMayFollow([starterAccount({ opening_minor: 5000 })], 0, ids, "KRW"), false);
+  eq(M.startersMayFollow([starterAccount({ opening_minor: 5000 })], [], ids, "KRW"), false);
   // An account the person made themselves.
-  eq(M.startersMayFollow([starterAccount({ id: "mine" })], 0, ids, "KRW"), false);
+  eq(M.startersMayFollow([starterAccount({ id: "mine" })], [], ids, "KRW"), false);
   // One starter already moved by hand: leave the whole set alone.
   eq(
-    M.startersMayFollow([starterAccount({}), starterAccount({ id: "s2", currency: "IDR" })], 0, new Set(["s1", "s2"]), "KRW"),
+    M.startersMayFollow([starterAccount({}), starterAccount({ id: "s2", currency: "IDR" })], [], new Set(["s1", "s2"]), "KRW"),
     false
   );
   // Nothing to move.
-  eq(M.startersMayFollow([], 0, ids, "KRW"), false);
+  eq(M.startersMayFollow([], [], ids, "KRW"), false);
   // Deleted starters are not in the way.
   eq(
-    M.startersMayFollow([starterAccount({}), starterAccount({ id: "s2", deleted_at: "2026-01-01T00:00:00Z" })], 0, ids, "KRW"),
+    M.startersMayFollow([starterAccount({}), starterAccount({ id: "s2", deleted_at: "2026-01-01T00:00:00Z" })], [], ids, "KRW"),
     true
   );
+});
+
+test("starting over leaves the accounts free to follow the currency again", () => {
+  // What "Start over" leaves behind: a drawer full of tombstones and a fresh
+  // set of starters. Counting those tombstones is what used to strand every
+  // reset ledger in the currency it happened to be reset into — set the main
+  // currency to rupiah afterwards and the accounts stayed in won, with a
+  // "no rate set for KRW" warning and nothing saying why.
+  const ids = new Set(["s1", "s2"]);
+  const afterReset = [starterAccount({}), starterAccount({ id: "s2" })];
+  const graveyard = [buried({ id: "t1" }), buried({ id: "t2" }), buried({ id: "t3" })];
+  eq(M.startersMayFollow(afterReset, graveyard, ids, "KRW"), true);
+
+  // And one live row among them is still enough to stop it.
+  eq(M.startersMayFollow(afterReset, [...graveyard, tx({ id: "t4" })], ids, "KRW"), false);
 });
 
 test("a starter row is renamed only while it still has the name we gave it", () => {

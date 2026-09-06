@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=8";
+} from "./supabase-config.js?v=9";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -44,7 +44,7 @@ import {
   startersMayFollow,
   starterRename,
   DEFAULT_CURRENCY,
-} from "./money.js?v=8";
+} from "./money.js?v=9";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.
@@ -1082,15 +1082,15 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
    * the moment a single amount is filed under an account, its currency is
    * a fact about that money and not a preference: `accountBalances` adds
    * minor units without converting, on the promise that a transaction is
-   * always in its account's currency. So this runs only for a ledger with
-   * no transactions at all — tombstones included, since a delete can still
-   * be undone — whose accounts are all untouched starters holding nothing.
+   * always in its account's currency. So this runs only for a ledger with no
+   * live transactions, whose accounts are all untouched starters holding
+   * nothing — which is true of a new account and of one just started over.
    */
   async function retuneStarterAccounts(from, to) {
     const all = [...rows.accounts.values()];
     const starters = new Set();
     for (const seed of SEED_ACCOUNTS) starters.add(await derivedId(uid, "account:" + seed.slug));
-    if (!startersMayFollow(all, rows.transactions.size, starters, from)) return;
+    if (!startersMayFollow(all, [...rows.transactions.values()], starters, from)) return;
 
     for (const a of all) {
       if (a.deleted_at) continue;
