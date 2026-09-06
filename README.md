@@ -14,13 +14,20 @@ A money manager for people whose money is in more than one currency.
 </p>
 <p align="center">
   <img src="docs/screenshots/editor.png" width="240" alt="Adding a transaction, with a calculator in the amount field" />
-  <img src="docs/screenshots/log-light.png" width="240" alt="The same screen in light mode" />
-  <img src="docs/screenshots/log-korean.png" width="240" alt="The same screen in Korean" />
+  <img src="docs/screenshots/settings.png" width="240" alt="Settings: currencies, rates, the month's start day, and a way back to an empty ledger" />
+  <img src="docs/screenshots/log-korean-light.png" width="240" alt="The log again, this time in Korean and in light mode" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/desktop.png" width="760" alt="The same ledger on a laptop, one wide column" />
 </p>
 
 <p align="center"><sub>
-Dark and light, English and Korean — the choice follows the account, not the
-device. Every figure above is real: these are taken by
+Six screens and six different things — the last of them carries both the light
+theme and the Korean translation rather than spending a picture on each. Dark
+and light, English and Korean: the choice follows the account, not the device,
+which is why the laptop above is showing what the phone was. Every figure is
+real — these are taken by
 <a href="tools/screenshots.mjs">tools/screenshots.mjs</a>, which drives the
 running app and fails the build if the arithmetic on screen is wrong.
 </sub></p>
@@ -82,7 +89,6 @@ letting anyone find out the hard way.
 <p align="center">
   <img src="docs/screenshots/signin.png" width="240" alt="The sign-in screen, offering Google or no account at all" />
   <img src="docs/screenshots/empty.png" width="240" alt="Day one: nothing recorded yet, and the banner saying where it will be kept" />
-  <img src="docs/screenshots/settings.png" width="240" alt="Settings, showing that this ledger is on this device only" />
 </p>
 
 ## Setup
