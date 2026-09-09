@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=9";
-import * as S from "./store.js?v=9";
-import * as M from "./money.js?v=9";
+} from "./supabase-config.js?v=10";
+import * as S from "./store.js?v=10";
+import * as M from "./money.js?v=10";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=9";
+} from "./i18n.js?v=10";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -2354,7 +2354,16 @@ function openAccountPicker(current, onPick) {
 function openAccount(existing) {
   const c = ctx();
   const draft = existing
-    ? { ...existing, opening: M.minorToInput(existing.opening_minor, existing.currency) }
+    ? {
+        ...existing,
+        // Zero is what the field means when it is empty, so it shows nothing
+        // and lets the placeholder say "0". Writing the zero out puts a
+        // character in the way: everyone who wants a starting balance has to
+        // delete it before typing one.
+        opening: existing.opening_minor
+          ? M.minorToInput(existing.opening_minor, existing.currency)
+          : "",
+      }
     : {
         id: M.uuid(),
         name: "",
@@ -3035,6 +3044,12 @@ function openRateEditor(code, onSaved) {
 function openRates() {
   let sheet = null;
   const build = () => sheet && sheet.rebuild();
+  // Currencies added in this sheet but not yet given a rate. They live here
+  // rather than in settings because a rate of 1 is not a blank — it is the
+  // claim that one rupiah is one won, used in every total until someone
+  // corrects it, and left in the box for them to delete first.
+  const pending = new Set();
+  const typed = new Map();
 
   function content(inner, close) {
     {
@@ -3045,6 +3060,7 @@ function openRates() {
       // Every currency actually in use, plus any already given a rate.
       const inUse = new Set(state.data.accounts.filter((a) => !a.deleted_at).map((a) => a.currency));
       for (const code of Object.keys(c.rates)) inUse.add(code);
+      for (const code of pending) inUse.add(code);
       inUse.delete(c.main_currency);
       const codes = [...inUse].sort();
 
@@ -3058,9 +3074,12 @@ function openRates() {
           class: "input num",
           type: "text",
           inputmode: "decimal",
-          value: c.rates[code] != null ? String(c.rates[code]) : "",
+          // What is on screen survives a rebuild — adding a second currency
+          // must not wipe the rate just typed for the first.
+          value: typed.has(code) ? typed.get(code) : c.rates[code] != null ? String(c.rates[code]) : "",
           placeholder: t("set.rateUnset"),
         });
+        input.addEventListener("input", () => typed.set(code, input.value));
         edits.set(code, input);
         body.append(
           el(
@@ -3079,9 +3098,12 @@ function openRates() {
         if (code === c.main_currency || inUse.has(code)) continue;
         addSelect.append(el("option", { value: code, text: code + " · " + M.currencyOf(code).name[getLang()] }));
       }
-      addSelect.addEventListener("change", async () => {
+      addSelect.addEventListener("change", () => {
         if (!addSelect.value) return;
-        await setSetting({ rates: { ...c.rates, [addSelect.value]: 1 } });
+        // A row to type into, and nothing written down yet. Save is what
+        // decides whether this currency ends up with a rate at all.
+        pending.add(addSelect.value);
+        typed.set(addSelect.value, "");
         build();
       });
       body.append(el("div", { class: "field", style: { marginTop: "16px" } }, addSelect));
