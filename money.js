@@ -15,14 +15,14 @@
 // ------------------------------------------------------------
 //  Currencies
 //
-//  `decimals` is what Tally shows, which is not always what the standard
-//  says. IDR is formally a two-decimal currency; nobody has priced anything
-//  in sen for decades, and "Rp 118,200.00" is two characters of noise on
-//  every row. Same reasoning, same answer, for KRW, JPY and VND.
+//  `decimals` is the *fewest* places Tally shows, which is not always what
+//  the standard says. IDR is formally a two-decimal currency; nobody has
+//  priced anything in sen for decades, and "Rp 118,200.00" is two characters
+//  of noise on every row. Same reasoning, same answer, for KRW, JPY and VND.
 //
-//  Amounts are stored as integers of the smallest unit shown here, so a
-//  currency's `decimals` must not change once you have entered anything in
-//  it — it is the scale of every number already saved.
+//  It is no longer the scale anything is stored at — see SCALE below, which
+//  is the same for every currency. So this number is safe to change: it
+//  moves what is on screen and nothing else.
 // ------------------------------------------------------------
 export const CURRENCIES = {
   KRW: { symbol: "₩", decimals: 0, name: { en: "Korean won", ko: "대한민국 원" } },
@@ -83,9 +83,27 @@ export function currencyOf(code) {
   return CURRENCIES[code] || UNKNOWN;
 }
 
-/** How many minor units make one of the currency's major units. */
-export function minorPerUnit(code) {
-  return Math.pow(10, currencyOf(code).decimals);
+/**
+ * How finely every amount is stored: thousandths of a major unit, whatever
+ * the currency. Rp5,000.553 is 5000553; $12.40 is 12400.
+ *
+ * One scale for all of them, rather than each currency storing at whatever
+ * precision it happens to display. Two reasons. Someone who wants to write
+ * 0.883 rupiah can, which a scale of "whole rupiah" made impossible. And an
+ * amount in the wrong currency is no longer an amount off by a factor of a
+ * hundred — mixing up which currency a minor number belongs to used to
+ * silently rescale it, which is a whole family of bugs that cannot happen
+ * when the scale is the same everywhere.
+ */
+export const SCALE = 3;
+const MINOR_PER_UNIT = 1000;
+
+/**
+ * How many minor units make one major unit. The same for every currency —
+ * the argument is kept so call sites still read as a question about money.
+ */
+export function minorPerUnit() {
+  return MINOR_PER_UNIT;
 }
 
 // ------------------------------------------------------------
@@ -95,13 +113,13 @@ export function minorPerUnit(code) {
 // Intl.NumberFormat is expensive to construct and gets called once per row,
 // so keep the ones we have made.
 const nfCache = new Map();
-function numberFormat(locale, decimals, grouping = true) {
-  const key = locale + "|" + decimals + "|" + grouping;
+function numberFormat(locale, min, max, grouping = true) {
+  const key = locale + "|" + min + "|" + max + "|" + grouping;
   let nf = nfCache.get(key);
   if (!nf) {
     nf = new Intl.NumberFormat(locale, {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
+      minimumFractionDigits: min,
+      maximumFractionDigits: max,
       useGrouping: grouping,
     });
     nfCache.set(key, nf);
@@ -117,7 +135,14 @@ function numberFormat(locale, decimals, grouping = true) {
  * switching language moves the currency symbol is a ledger you have to
  * re-read.
  *
- * @param minor  integer, in the currency's smallest shown unit
+ * A currency's `decimals` is a floor, not a width. Won and rupiah show none,
+ * so a whole number of them stays "₩12,400" rather than "₩12,400.000" — two
+ * or three characters of noise on every row of the log. But the extra places
+ * are there when the amount needs them: "Rp5,000.553" is what was entered,
+ * and rounding it away on screen would be the app telling a small lie about
+ * a number it stored correctly.
+ *
+ * @param minor  integer, in thousandths of a major unit
  * @param code   ISO 4217 code
  * @param opts.locale    BCP-47 tag for digit grouping (default en-US)
  * @param opts.sign      "auto" (default, a minus when negative) | "always" | "never"
@@ -127,8 +152,8 @@ export function formatMoney(minor, code, opts = {}) {
   const { locale = "en-US", sign = "auto", symbol = true } = opts;
   const cur = currencyOf(code);
   const n = Number(minor) || 0;
-  const abs = Math.abs(n) / Math.pow(10, cur.decimals);
-  const digits = numberFormat(locale, cur.decimals).format(abs);
+  const abs = Math.abs(n) / MINOR_PER_UNIT;
+  const digits = numberFormat(locale, cur.decimals, SCALE).format(abs);
 
   let prefix = "";
   if (n < 0 && sign !== "never") prefix = "−";        // U+2212, not a hyphen
@@ -150,7 +175,7 @@ export function formatMoney(minor, code, opts = {}) {
  */
 export function formatCompact(minor, code, opts = {}) {
   const cur = currencyOf(code);
-  const units = Math.abs(Number(minor) || 0) / Math.pow(10, cur.decimals);
+  const units = Math.abs(Number(minor) || 0) / MINOR_PER_UNIT;
   if (units < 10000) return formatMoney(minor, code, opts);
   const neg = Number(minor) < 0 ? "−" : "";
   const sym = opts.symbol === false ? "" : cur.symbol;
@@ -277,8 +302,14 @@ export function evalExpression(input) {
   return value;
 }
 
-/** The largest amount Tally will accept, in major units. */
-export const MAX_AMOUNT = 1e13;
+/**
+ * The largest amount Tally will accept, in major units.
+ *
+ * A thousand times smaller than it looks it should be, because every amount
+ * is stored a thousand times larger: a trillion of anything is 1e15 minor
+ * units, and JavaScript stops counting exactly a little above 9e15.
+ */
+export const MAX_AMOUNT = 1e12;
 
 /**
  * Turn what is in the amount field into minor units.
@@ -289,15 +320,31 @@ export function parseAmountToMinor(input, code) {
   if (value === null) return null;
   const abs = Math.abs(value);
   if (abs > MAX_AMOUNT) return null;
-  const minor = Math.round(abs * minorPerUnit(code));
+  // Rounding, not truncation: a fourth decimal typed into a field that keeps
+  // three is worth a tenth of a unit either way, and rounding is the answer
+  // that is never more than half of one out.
+  const minor = Math.round(abs * MINOR_PER_UNIT);
   return Number.isSafeInteger(minor) ? minor : null;
 }
 
-/** Minor units back into something the amount field can show and re-parse. */
+/**
+ * Minor units back into something the amount field can show and re-parse.
+ *
+ * The same floor-not-width rule as formatMoney, minus the grouping: whole
+ * won come back as "12400" rather than "12400.000", and a rupiah amount that
+ * needed three places keeps all three.
+ */
 export function minorToInput(minor, code) {
   const cur = currencyOf(code);
-  const v = (Number(minor) || 0) / Math.pow(10, cur.decimals);
-  return cur.decimals === 0 ? String(Math.round(v)) : v.toFixed(cur.decimals);
+  const v = (Number(minor) || 0) / MINOR_PER_UNIT;
+  let out = v.toFixed(SCALE);
+  // Drop trailing zeros, but never past what this currency always shows.
+  if (SCALE > cur.decimals) {
+    const keep = out.length - (SCALE - cur.decimals);
+    while (out.length > keep && out.endsWith("0")) out = out.slice(0, -1);
+    if (out.endsWith(".")) out = out.slice(0, -1);
+  }
+  return out;
 }
 
 // ------------------------------------------------------------

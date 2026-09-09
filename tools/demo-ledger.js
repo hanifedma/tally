@@ -67,19 +67,34 @@ export async function buildDemoLedger(M) {
     })
   );
 
+  // Every amount below is written the way a person would say it — 3300 is
+  // three thousand three hundred won — and scaled to storage units here, in
+  // one place, rather than being typed out in thousandths twenty-five times.
+  const units = (n) => Math.round(n * M.minorPerUnit());
+
   const accounts = [
     { id: acc.cash, name: "Cash", kind: "cash", currency: "KRW", opening_minor: 180000, color: "green", position: 0 },
     { id: acc.bank, name: "KB Bank", kind: "bank", currency: "KRW", opening_minor: 7420000, color: "indigo", position: 1 },
     { id: acc.gopay, name: "GoPay", kind: "ewallet", currency: "IDR", opening_minor: 1450000, color: "sky", position: 2 },
     { id: acc.old, name: "Old wallet", kind: "cash", currency: "KRW", opening_minor: 0, color: "gray", position: 3, archived: true },
-  ].map((a) => M.normalizeAccount({ ...a, user_id: UID }));
+  ].map((a) => M.normalizeAccount({ ...a, user_id: UID, opening_minor: units(a.opening_minor) }));
 
   // What one rupiah was worth in won on the day each row was entered. It is
   // frozen onto the row, which is why `rate_base` is the main currency and
   // never the transaction's own.
   const IDR = 0.0876;
   const tx = (o) =>
-    M.normalizeTx({ id: M.uuid(), user_id: UID, rate_base: "KRW", rate: 1, currency: "KRW", ...o });
+    M.normalizeTx({
+      id: M.uuid(),
+      user_id: UID,
+      rate_base: "KRW",
+      rate: 1,
+      currency: "KRW",
+      ...o,
+      amount_minor: units(o.amount_minor || 0),
+      to_amount_minor: o.to_amount_minor == null ? null : units(o.to_amount_minor),
+      fee_minor: o.fee_minor == null ? 0 : units(o.fee_minor),
+    });
 
   const transactions = [
     tx({ kind: "income", amount_minor: 3120000, account_id: acc.bank, category_id: cat.salary, note: monthName(0) + " salary", occurred_on: day(9), occurred_min: 545 }),
@@ -106,9 +121,9 @@ export async function buildDemoLedger(M) {
   ];
 
   const budgets = [
-    M.normalizeBudget({ id: M.uuid(), user_id: UID, category_id: null, amount_minor: 1200000, currency: "KRW" }),
-    M.normalizeBudget({ id: M.uuid(), user_id: UID, category_id: cat.food, amount_minor: 300000, currency: "KRW" }),
-    M.normalizeBudget({ id: M.uuid(), user_id: UID, category_id: cat.transport, amount_minor: 60000, currency: "KRW" }),
+    M.normalizeBudget({ id: M.uuid(), user_id: UID, category_id: null, amount_minor: units(1200000), currency: "KRW" }),
+    M.normalizeBudget({ id: M.uuid(), user_id: UID, category_id: cat.food, amount_minor: units(300000), currency: "KRW" }),
+    M.normalizeBudget({ id: M.uuid(), user_id: UID, category_id: cat.transport, amount_minor: units(60000), currency: "KRW" }),
   ];
 
   const settings = M.normalizeSettings({

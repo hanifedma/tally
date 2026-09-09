@@ -8,7 +8,7 @@
 --  Five tables, all private to one person by row level security, all
 --  streamed to every signed-in device by Realtime.
 --
---  ── Two decisions worth knowing about ──────────────────────
+--  ── Three decisions worth knowing about ────────────────────
 --
 --  1. Nothing is ever really deleted. `deleted_at` marks a row as gone and
 --     clients filter it out. That buys three things at once: undo; a delta
@@ -19,7 +19,14 @@
 --     device that needed it. A soft delete is an UPDATE carrying the whole
 --     row, so it always arrives.
 --
---  2. A transaction's date is a plain `date`, not a timestamp. An entry
+--  2. Every `*_minor` column counts *thousandths of a major unit*, the same
+--     for every currency: 5000553 is Rp5,000.553 and 12400 is $12.40. Money
+--     is never a float here — a hundredth of a cent is exact as an integer
+--     and approximate as a double, and a ledger that drifts is worse than a
+--     ledger that is coarse. Three decimals because whole rupiah turned out
+--     not to be fine enough to write down what people actually pay.
+--
+--  3. A transaction's date is a plain `date`, not a timestamp. An entry
 --     belongs to the calendar day you say it does — recording lunch in Seoul
 --     and opening the app in Jakarta must not move it to yesterday. The time
 --     of day rides along as minutes past midnight, purely for ordering
@@ -81,7 +88,8 @@ create table if not exists public.accounts (
   -- cash | bank | card | ewallet | savings
   kind          text        not null default 'cash',
   currency      text        not null default 'KRW',
-  -- The balance before the first recorded transaction, in minor units.
+  -- The balance before the first recorded transaction, in thousandths of a
+  -- major unit. See the note at the top of the file.
   opening_minor bigint      not null default 0,
   color         text        not null default 'indigo',
   archived      boolean     not null default false,
@@ -123,8 +131,9 @@ create table if not exists public.transactions (
   user_id         uuid        not null default auth.uid() references auth.users(id) on delete cascade,
   -- expense | income | transfer
   kind            text        not null,
-  -- Always positive, in minor units of `currency`. Direction is `kind`'s job;
-  -- a signed amount plus a kind is two sources of truth for one fact.
+  -- Always positive, in thousandths of a `currency` unit. Direction is
+  -- `kind`'s job; a signed amount plus a kind is two sources of truth for
+  -- one fact.
   amount_minor    bigint      not null,
   currency        text        not null,
   -- What one major unit of `currency` was worth in `rate_base` on the day
@@ -139,9 +148,9 @@ create table if not exists public.transactions (
   -- transfer only: the account it arrived in.
   to_account_id   uuid references public.accounts(id) on delete set null,
   -- transfer only, and only when the two accounts hold different currencies:
-  -- what actually landed, in minor units of the destination's currency.
+  -- what actually landed, in thousandths of the destination's currency.
   to_amount_minor bigint,
-  -- transfer only: what the bank kept, in minor units of `currency` — the
+  -- transfer only: what the bank kept, in thousandths of `currency` — the
   -- sending account's. It leaves that account on top of amount_minor and
   -- counts as spending, because it is money that went to someone else.
   fee_minor       bigint      not null default 0,

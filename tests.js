@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=10";
+import * as M from "./money.js?v=11";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -40,41 +40,54 @@ function near(actual, expected, tolerance, message) {
 //  Formatting
 // ------------------------------------------------------------
 
+// Every amount below is in thousandths of a major unit, whatever the
+// currency: 755297000 is ₩755,297 and 12400 is $12.40. See SCALE.
+
 test("won and rupiah are whole numbers, dollars are not", () => {
-  eq(M.formatMoney(755297, "KRW"), "₩755,297");
-  eq(M.formatMoney(118200, "IDR"), "Rp118,200");
-  eq(M.formatMoney(1240, "USD"), "$12.40");
+  eq(M.formatMoney(755297000, "KRW"), "₩755,297");
+  eq(M.formatMoney(118200000, "IDR"), "Rp118,200");
+  eq(M.formatMoney(12400, "USD"), "$12.40");
   eq(M.formatMoney(0, "KRW"), "₩0");
 });
 
+test("a currency's decimals are a floor, not a width", () => {
+  // Rupiah shows none until the amount has some, and then shows what it has.
+  eq(M.formatMoney(5000553, "IDR"), "Rp5,000.553");
+  eq(M.formatMoney(883, "IDR"), "Rp0.883");
+  eq(M.formatMoney(5000500, "IDR"), "Rp5,000.5", "no padding out to three");
+  // Dollars never show fewer than two places, and never more than three.
+  eq(M.formatMoney(12405, "USD"), "$12.405");
+  eq(M.formatMoney(12000, "USD"), "$12.00");
+});
+
 test("negatives use a real minus sign, not a hyphen", () => {
-  const s = M.formatMoney(-427726, "KRW");
+  const s = M.formatMoney(-427726000, "KRW");
   eq(s, "−₩427,726");
   assert(!s.includes("-"), "should not contain an ASCII hyphen");
 });
 
 test("sign: always adds a plus, never drops the minus", () => {
-  eq(M.formatMoney(500, "KRW", { sign: "always" }), "+₩500");
-  eq(M.formatMoney(-500, "KRW", { sign: "always" }), "−₩500");
-  eq(M.formatMoney(-500, "KRW", { sign: "never" }), "₩500");
+  eq(M.formatMoney(500000, "KRW", { sign: "always" }), "+₩500");
+  eq(M.formatMoney(-500000, "KRW", { sign: "always" }), "−₩500");
+  eq(M.formatMoney(-500000, "KRW", { sign: "never" }), "₩500");
   eq(M.formatMoney(0, "KRW", { sign: "always" }), "₩0");
 });
 
 test("some currencies put the symbol after the number", () => {
   // A non-breaking space, so the amount and its symbol stay one word.
-  eq(M.formatMoney(120000, "VND"), "120,000 ₫");
-  eq(M.formatMoney(12345, "SEK"), "123.45 kr");
+  eq(M.formatMoney(120000000, "VND"), "120,000 ₫");
+  eq(M.formatMoney(123450, "SEK"), "123.45 kr");
 });
 
 test("an unknown currency still formats rather than throwing", () => {
-  eq(M.formatMoney(1234, "XYZ"), "12.34");
+  eq(M.formatMoney(12340, "XYZ"), "12.34");
 });
 
 test("compact form only kicks in where it earns its place", () => {
-  eq(M.formatCompact(8400, "KRW"), "₩8,400");
-  eq(M.formatCompact(755297, "KRW"), "₩755K", "three significant figures is enough");
-  eq(M.formatCompact(2260452, "KRW"), "₩2.3M");
-  eq(M.formatCompact(-2260452, "KRW"), "−₩2.3M");
+  eq(M.formatCompact(8400000, "KRW"), "₩8,400");
+  eq(M.formatCompact(755297000, "KRW"), "₩755K", "three significant figures is enough");
+  eq(M.formatCompact(2260452000, "KRW"), "₩2.3M");
+  eq(M.formatCompact(-2260452000, "KRW"), "−₩2.3M");
 });
 
 // ------------------------------------------------------------
@@ -132,19 +145,43 @@ test("the amount field is not an eval() in disguise", () => {
 });
 
 test("amounts become whole minor units", () => {
-  eq(M.parseAmountToMinor("12000", "KRW"), 12000);
-  eq(M.parseAmountToMinor("12.40", "USD"), 1240);
-  eq(M.parseAmountToMinor("12.345", "USD"), 1235, "rounds to the nearest cent");
-  eq(M.parseAmountToMinor("118200.4", "IDR"), 118200, "rupiah has no fractions to keep");
-  eq(M.parseAmountToMinor("-500", "KRW"), 500, "direction is the kind's job");
+  eq(M.parseAmountToMinor("12000", "KRW"), 12000000);
+  eq(M.parseAmountToMinor("12.40", "USD"), 12400);
+  eq(M.parseAmountToMinor("12.345", "USD"), 12345, "three places are kept");
+  eq(M.parseAmountToMinor("-500", "KRW"), 500000, "direction is the kind's job");
   eq(M.parseAmountToMinor("1e20", "KRW"), null, "beyond what can be stored");
   eq(M.parseAmountToMinor("", "KRW"), null);
 });
 
+test("rupiah keeps its fractions now, and rounds at the fourth place", () => {
+  // The whole point of the change: a rupiah is no longer the smallest thing
+  // Tally can count.
+  eq(M.parseAmountToMinor("5000.553", "IDR"), 5000553);
+  eq(M.parseAmountToMinor("0.883", "IDR"), 883);
+  eq(M.parseAmountToMinor("118200.4", "IDR"), 118200400);
+  // A fourth decimal is half a thousandth either way; round, do not truncate.
+  eq(M.parseAmountToMinor("1.0004", "IDR"), 1000);
+  eq(M.parseAmountToMinor("1.0005", "IDR"), 1001);
+});
+
 test("minorToInput round-trips", () => {
-  for (const [minor, code] of [[755297, "KRW"], [1240, "USD"], [118200, "IDR"], [5, "USD"]]) {
+  const cases = [
+    [755297000, "KRW"], [12400, "USD"], [118200000, "IDR"], [5, "USD"],
+    [5000553, "IDR"], [883, "IDR"], [12405, "USD"],
+  ];
+  for (const [minor, code] of cases) {
     eq(M.parseAmountToMinor(M.minorToInput(minor, code), code), minor, code);
   }
+});
+
+test("the amount field is not padded with zeros it does not need", () => {
+  eq(M.minorToInput(118200000, "IDR"), "118200", "no trailing .000 to delete");
+  eq(M.minorToInput(0, "KRW"), "0");
+  eq(M.minorToInput(5000553, "IDR"), "5000.553");
+  eq(M.minorToInput(5000500, "IDR"), "5000.5");
+  eq(M.minorToInput(12400, "USD"), "12.40", "dollars keep their two");
+  eq(M.minorToInput(12405, "USD"), "12.405");
+  eq(M.minorToInput(-20000000, "KRW"), "-20000", "a credit card's opening balance");
 });
 
 // ------------------------------------------------------------
@@ -232,33 +269,36 @@ const tx = (over = {}) =>
   });
 
 test("same currency needs no conversion", () => {
-  eq(M.toMain(tx({ amount_minor: 12400, currency: "KRW" }), CTX), 12400);
+  eq(M.toMain(tx({ amount_minor: 12400000, currency: "KRW" }), CTX), 12400000);
 });
 
 test("rupiah converts into won at the rate frozen on the row", () => {
-  const row = tx({ amount_minor: 118200, currency: "IDR", rate: 0.0875, rate_base: "KRW" });
-  eq(M.toMain(row, CTX), Math.round(118200 * 0.0875));
+  // Rp118,200 at 0.0875 won to the rupiah.
+  const row = tx({ amount_minor: 118200000, currency: "IDR", rate: 0.0875, rate_base: "KRW" });
+  eq(M.toMain(row, CTX), Math.round(118200 * 0.0875 * 1000));
 });
 
 test("an old row keeps the price it was recorded at", () => {
-  const old = tx({ amount_minor: 100000, currency: "IDR", rate: 0.09, rate_base: "KRW" });
+  const old = tx({ amount_minor: 100000000, currency: "IDR", rate: 0.09, rate_base: "KRW" });
   const now = { main_currency: "KRW", rates: { IDR: 0.07 } };
-  eq(M.toMain(old, now), 9000, "today's rate must not rewrite last March");
+  eq(M.toMain(old, now), 9000000, "today's rate must not rewrite last March");
 });
 
 test("changing the main currency re-expresses old rows through settings", () => {
   // Recorded when won was the main currency: 100,000 IDR at 0.0875 = 8,750 KRW.
-  const row = tx({ amount_minor: 100000, currency: "IDR", rate: 0.0875, rate_base: "KRW" });
+  const row = tx({ amount_minor: 100000000, currency: "IDR", rate: 0.0875, rate_base: "KRW" });
   // Main currency is now the dollar; one won is worth 1/1380 of a dollar.
   const usdCtx = { main_currency: "USD", rates: { KRW: 1 / 1380, IDR: 0.0875 / 1380 } };
-  // 8,750 KRW ≈ $6.34 → 634 cents.
-  near(M.toMain(row, usdCtx), 634, 1);
+  // 8,750 KRW ≈ $6.34.
+  near(M.toMain(row, usdCtx), 6340, 10);
 });
 
-test("decimals differ between the two currencies", () => {
-  // $12.40 into won, at 1380 won to the dollar.
-  const row = tx({ amount_minor: 1240, currency: "USD", rate: 1380, rate_base: "KRW" });
-  eq(M.toMain(row, CTX), 17112);
+test("a currency that shows two places and one that shows none still agree", () => {
+  // $12.40 into won, at 1380 won to the dollar. Both are stored in
+  // thousandths now, so this is no longer a question of scale — but it is
+  // still the case the arithmetic used to get wrong.
+  const row = tx({ amount_minor: 12400, currency: "USD", rate: 1380, rate_base: "KRW" });
+  eq(M.toMain(row, CTX), 17112000);
 });
 
 test("a currency with no rate cannot be saved in the first place", () => {
@@ -304,9 +344,9 @@ test("what else stops a transaction being saved", () => {
 });
 
 test("converting between two non-main currencies", () => {
-  // 1,000,000 IDR = 87,500 KRW = $63.41 → 6341 cents.
-  near(M.convertMinor(1000000, "IDR", "USD", CTX), 6341, 2);
-  eq(M.convertMinor(500, "KRW", "KRW", CTX), 500);
+  // 1,000,000 IDR = 87,500 KRW = $63.41.
+  near(M.convertMinor(1000000000, "IDR", "USD", CTX), 63406, 2);
+  eq(M.convertMinor(500000, "KRW", "KRW", CTX), 500000);
 });
 
 // ------------------------------------------------------------
@@ -545,9 +585,9 @@ test("budgets report how far over, not just that they are over", () => {
 });
 
 test("a budget set in another currency is converted", () => {
-  const budgets = [M.normalizeBudget({ id: "b", category_id: null, amount_minor: 100, currency: "USD" })];
+  const budgets = [M.normalizeBudget({ id: "b", category_id: null, amount_minor: 1000, currency: "USD" })];
   const progress = M.budgetProgress(budgets, [], [], CTX);
-  eq(progress[0].limit, 1380, "$1.00 is 1,380 won");
+  eq(progress[0].limit, 1380000, "$1.00 is 1,380 won");
 });
 
 // ------------------------------------------------------------
@@ -693,17 +733,21 @@ test("the CSV escapes anything that would break a column", () => {
 });
 
 test("the CSV carries both what was paid and what it was worth", () => {
-  const rows = [tx({ id: "1", amount_minor: 118200, currency: "IDR", rate: 0.0875, rate_base: "KRW" })];
+  const rows = [tx({ id: "1", amount_minor: 118200000, currency: "IDR", rate: 0.0875, rate_base: "KRW" })];
   const line = M.toCsv(rows, { accounts, categories: [], ctx: CTX }).split("\r\n")[1];
-  assert(line.includes(",IDR,118200,"), "the original amount, in its own currency");
-  assert(line.endsWith("," + Math.round(118200 * 0.0875)), "and its value in won");
+  assert(line.includes(",IDR,118200,"), "the original amount, in its own currency: " + line);
+  // A spreadsheet gets the number a person would write, not the thousandths.
+  // 118,200 × 0.0875 is 10,342.5 exactly, and now that won are counted in
+  // thousandths the half is kept rather than rounded away — which is the
+  // point of the finer scale: a converted column that adds up.
+  assert(line.endsWith(",10342.5"), "and its value in won: " + line);
 });
 
 test("the CSV's main-currency column holds a transfer's fee and nothing else", () => {
   const rows = [
-    tx({ id: "1", kind: "transfer", amount_minor: 500000, fee_minor: 1500, currency: "KRW",
+    tx({ id: "1", kind: "transfer", amount_minor: 500000000, fee_minor: 1500000, currency: "KRW",
          account_id: "a1", to_account_id: "a3" }),
-    tx({ id: "2", kind: "transfer", amount_minor: 500000, currency: "KRW",
+    tx({ id: "2", kind: "transfer", amount_minor: 500000000, currency: "KRW",
          account_id: "a1", to_account_id: "a3" }),
   ];
   const lines = M.toCsv(rows, { accounts, categories: [], ctx: CTX }).split("\r\n");
