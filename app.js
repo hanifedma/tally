@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=16";
-import * as S from "./store.js?v=16";
-import * as M from "./money.js?v=16";
+} from "./supabase-config.js?v=17";
+import * as S from "./store.js?v=17";
+import * as M from "./money.js?v=17";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=16";
+} from "./i18n.js?v=17";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -333,7 +333,14 @@ function rebuildLiveSheets() {
  *              stale the moment anything is added from a sheet on top of it
  *              or, just as easily, from the phone in the other pocket.
  */
-function openSheet(build, { onClose, live = false } = {}) {
+/**
+ * @param unsaved Asked, every time something tries to close this sheet,
+ *   whether there is anything in it worth keeping. A sheet that says yes is
+ *   not closed by a stray click on the backdrop or a press of Escape without
+ *   a question first — the same rule the phone applies, for the same reason:
+ *   a form is easy to dismiss by accident and expensive to retype.
+ */
+function openSheet(build, { onClose, live = false, unsaved = null } = {}) {
   const inner = el("div", { class: "sheet-inner" });
   const dlg = el("dialog", { class: "sheet" }, inner);
   const opener = document.activeElement;
@@ -362,18 +369,42 @@ function openSheet(build, { onClose, live = false } = {}) {
     if (onClose) onClose();
   }
 
+  /** Close, unless there is unsaved work in here and it is not wanted gone. */
+  const askThenClose = async () => {
+    if (unsaved && unsaved()) {
+      const ok = await confirmSheet({
+        title: t("discard.title"),
+        body: t("discard.body"),
+        confirmLabel: t("discard.confirm"),
+        cancelLabel: t("discard.keep"),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    close();
+  };
+
   dlg.addEventListener("close", cleanup);
   // A click on the backdrop — the dialog itself rather than the card inside
   // it — closes. Anything mid-edit stays put, because the card is in the way.
   dlg.addEventListener("click", (e) => {
-    if (e.target === dlg) close();
+    if (e.target === dlg) askThenClose();
+  });
+  // Escape closes a <dialog> on its own, which is right for a sheet you are
+  // reading and wrong for one you are filling in. Refusing the event leaves
+  // the sheet where it is and asks instead.
+  dlg.addEventListener("cancel", (e) => {
+    if (unsaved && unsaved()) {
+      e.preventDefault();
+      askThenClose();
+    }
   });
 
   const fill = (fn) => {
     const bodyBefore = inner.querySelector(".sheet-body");
     const scroll = bodyBefore ? bodyBefore.scrollTop : 0;
     clear(inner);
-    fn(inner, close);
+    fn(inner, close, askThenClose);
     const bodyAfter = inner.querySelector(".sheet-body");
     if (bodyAfter && scroll) bodyAfter.scrollTop = scroll;
     const first = inner.querySelector("[data-autofocus]");
@@ -1690,13 +1721,32 @@ function openTransaction(existing) {
   let sheet = null;
   const rerender = () => sheet && sheet.rebuild();
 
-  sheet = openSheet((inner, close) => {
-    inner.append(...transactionSheetContent(draft, existing, close, view, rerender));
-    view.first = false;
-  });
+  // What this opened with, so that closing it can tell whether anything was
+  // written. Only the parts a person puts there: the currency and rate follow
+  // whichever account is chosen and nobody would miss them. Filing an entry
+  // makes what is on screen the new starting point, so "save and another"
+  // does not leave the sheet claiming to hold unsaved work.
+  const typed = (d) => JSON.stringify([
+    d.kind, d.amount, d.category_id, d.account_id, d.to_account_id,
+    d.to_amount_minor, d.fee, d.note, d.occurred_on, d.occurred_min,
+  ]);
+  view.opened = typed(draft);
+  view.filed = () => {
+    view.opened = typed(draft);
+  };
+
+  sheet = openSheet(
+    (inner, close, askThenClose) => {
+      inner.append(
+        ...transactionSheetContent(draft, existing, close, view, rerender, askThenClose)
+      );
+      view.first = false;
+    },
+    { unsaved: () => typed(draft) !== view.opened }
+  );
 }
 
-function transactionSheetContent(draft, existing, closeIt, view, rerender) {
+function transactionSheetContent(draft, existing, closeIt, view, rerender, askThenClose) {
   const getError = () => view.errorKey;
   const setError = (k) => {
     view.errorKey = k;
@@ -2196,6 +2246,9 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
       // for, not every transfer after it.
       view.feeTouched = false;
       suggestFee();
+      // Filed, so this is the new starting point: closing now has nothing
+      // left to ask about.
+      if (view.filed) view.filed();
       rerender();
     } else {
       closeIt();
@@ -2247,7 +2300,7 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
     }
   });
 
-  return [sheetHead(existing ? t("tx.edit") : t("tx.new"), closeIt), body, foot];
+  return [sheetHead(existing ? t("tx.edit") : t("tx.new"), askThenClose || closeIt), body, foot];
 }
 
 function commit(draft) {

@@ -304,6 +304,13 @@ const STRINGS = {
     "delete": "Delete",
     "close": "Close",
     "done": "Done",
+    // Asked before a half-written entry is thrown away. "Keep editing"
+    // rather than "Cancel", because next to "Discard" a cancel button is a
+    // question about the question.
+    "discard.title": "Discard what you have written?",
+    "discard.body": "This entry has not been saved yet.",
+    "discard.confirm": "Discard",
+    "discard.keep": "Keep editing",
     "back": "Back",
     "loading": "Loading…",
     "all": "All",
@@ -617,6 +624,10 @@ const STRINGS = {
     "delete": "삭제",
     "close": "닫기",
     "done": "완료",
+    "discard.title": "입력한 내용을 버릴까요?",
+    "discard.body": "아직 저장되지 않았습니다.",
+    "discard.confirm": "버리기",
+    "discard.keep": "계속 입력",
     "back": "뒤로",
     "loading": "불러오는 중…",
     "all": "전체",
