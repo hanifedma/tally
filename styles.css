@@ -389,6 +389,12 @@ a {
    button's full 40, so the two together read as one shape: ours around the
    edges, Google's in the middle, the same colour throughout.
 
+   The 44 is what the plain button comes back as, and these two heights are
+   written for it so the slot is the right shape before anything has loaded.
+   Once the iframe is there renderGoogleButton measures it and sets both
+   from what actually arrived, which is what fits the taller "Continue as …"
+   card Google draws for an account it recognises.
+
    Only when there is an iframe to clip. On an origin Google has not been
    told about — localhost, while you are working on this — it renders the
    button as ordinary elements in this page instead, at the full height of

@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=13";
+} from "./supabase-config.js?v=14";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -44,7 +44,7 @@ import {
   startersMayFollow,
   starterRename,
   DEFAULT_CURRENCY,
-} from "./money.js?v=13";
+} from "./money.js?v=14";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.
@@ -164,22 +164,39 @@ export function loadGoogleIdentity(locale = "en") {
  * itself: a slow render paints a moment late instead of being called a
  * failure and replaced by the fallback link.
  */
-function paintWhileDrawn(el) {
-  const drawn = () => {
+function paintWhileDrawn(el, inner) {
+  let watched = null;
+
+  const sync = () => {
     const frame = el.querySelector("iframe");
     // No iframe at all means it drew into this page instead.
-    if (!frame) return !!el.querySelector('[role="button"]');
-    return frame.getBoundingClientRect().height > 0;
-  };
-  let watched = null;
-  const sync = () => {
-    el.classList.toggle("has-button", drawn());
-    const frame = el.querySelector("iframe");
+    const drawn = frame
+      ? frame.getBoundingClientRect().height > 0
+      : !!el.querySelector('[role="button"]');
+    el.classList.toggle("has-button", drawn);
+
+    if (frame && drawn) {
+      // How tall to make the clip, measured rather than assumed. Google pads
+      // the iframe a couple of pixels around the button, and the button is
+      // not always the same one: for an account it already recognises it
+      // draws a "Continue as …" card with a picture in it, which need not be
+      // the height of the plain one. Taking the height from the iframe and
+      // cutting the same margin off it fits whichever arrives, where a fixed
+      // 40 would fit one and crop the other.
+      const h = Math.round(frame.getBoundingClientRect().height);
+      el.style.height = h - 4 + "px";
+      inner.style.height = h - 8 + "px";
+    } else {
+      el.style.height = "";
+      inner.style.height = "";
+    }
+
     if (frame && frame !== watched && typeof ResizeObserver === "function") {
       watched = frame;
-      new ResizeObserver(() => el.classList.toggle("has-button", drawn())).observe(frame);
+      new ResizeObserver(sync).observe(frame);
     }
   };
+
   sync();
   // The iframe is not always there yet, and is not always still there.
   for (const ms of [100, 300, 800, 1600, 3000]) setTimeout(sync, ms);
@@ -246,7 +263,7 @@ export async function renderGoogleButton(el, { locale = "en", dark = true, onSig
       width: Math.max(240, Math.min(400, Math.round(el.getBoundingClientRect().width) || 356)),
     });
 
-    paintWhileDrawn(el);
+    paintWhileDrawn(el, inner);
     return true;
   } catch (e) {
     console.error("Couldn't render the Google button:", e);
