@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=12";
+import * as M from "./money.js?v=13";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });

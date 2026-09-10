@@ -354,8 +354,11 @@ a {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  width: 356px;
-  max-width: 100%;
+  /* The width of the button below it, so the two line up. Never wider than
+     400: that is the widest button Google will draw, and a slot wider than
+     the button it was given is the white showing again at the ends. */
+  width: 100%;
+  max-width: 400px;
   height: 40px;
   margin: 0 auto;
   border-radius: 999px;
