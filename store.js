@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=11";
+} from "./supabase-config.js?v=12";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -44,7 +44,7 @@ import {
   startersMayFollow,
   starterRename,
   DEFAULT_CURRENCY,
-} from "./money.js?v=11";
+} from "./money.js?v=12";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.
@@ -150,6 +150,42 @@ export function loadGoogleIdentity(locale = "en") {
 }
 
 /**
+ * Keep the slot painted only while Google's button is really in it.
+ *
+ * renderButton does not report failure. Asked to draw on an origin it has
+ * not been told about — a dev server on a port nobody registered — it
+ * returns quietly, and either leaves an iframe of no size behind or draws
+ * one and collapses it a moment later once it has checked. The slot paints
+ * the button's own pill now, so painting it regardless would leave a shape
+ * that looks like a button and does nothing.
+ *
+ * Watching the size rather than deciding once keeps the two in step
+ * whichever order they happen in, and stays out of the way of the sign-in
+ * itself: a slow render paints a moment late instead of being called a
+ * failure and replaced by the fallback link.
+ */
+function paintWhileDrawn(el) {
+  const drawn = () => {
+    const frame = el.querySelector("iframe");
+    // No iframe at all means it drew into this page instead.
+    if (!frame) return !!el.querySelector('[role="button"]');
+    return frame.getBoundingClientRect().height > 0;
+  };
+  let watched = null;
+  const sync = () => {
+    el.classList.toggle("has-button", drawn());
+    const frame = el.querySelector("iframe");
+    if (frame && frame !== watched && typeof ResizeObserver === "function") {
+      watched = frame;
+      new ResizeObserver(() => el.classList.toggle("has-button", drawn())).observe(frame);
+    }
+  };
+  sync();
+  // The iframe is not always there yet, and is not always still there.
+  for (const ms of [100, 300, 800, 1600, 3000]) setTimeout(sync, ms);
+}
+
+/**
  * Draw Google's own button into `el` and hand the resulting ID token to
  * Supabase. Returns true if the button was rendered.
  *
@@ -183,26 +219,34 @@ export async function renderGoogleButton(el, { locale = "en", dark = true, onSig
       itp_support: true,
     });
     el.innerHTML = "";
-    gid.renderButton(el, {
+    el.classList.remove("has-button");
+    // A wrapper of our own to render into, so the clipping that hides
+    // Google's white iframe canvas is done by two elements we control rather
+    // than by guessing at the class names inside theirs. See .login-btn-slot
+    // in styles.css for what the two of them are doing.
+    const inner = document.createElement("div");
+    inner.className = "login-btn-inner";
+    el.appendChild(inner);
+
+    gid.renderButton(inner, {
       type: "standard",
-      // Follows the app's theme.
-      //
-      // This used to be pinned to `outline` — white in both themes —
-      // because Google rendered the button into an iframe whose document it
-      // painted white, so a dark button sat in a white box and the least
-      // bad answer was to make the button white too and hide the seam.
-      // That is no longer how it renders: the button is ordinary DOM in
-      // this page now, and the only iframe left is a 0×0 helper. Nothing
-      // paints white behind it any more, so pinning it white only put a
-      // white slab on a black page.
+      // Follows the app's theme, which it could not do while the white
+      // canvas behind it was showing — the old answer was to pin this to
+      // `outline` and let a white button hide a white box.
       theme: dark ? "filled_black" : "outline",
       size: "large",
       shape: "pill",
       text: "continue_with",
       logo_alignment: "center",
       locale,
-      width: Math.min(360, Math.max(240, el.clientWidth || 320)),
+      // The slot's own width, whatever the screen has made it. Google draws
+      // the iframe twenty pixels wider than this, and the slot clips it back
+      // to exactly this — so the ten pixels lost from each side are the
+      // white edge of the iframe rather than any of the button.
+      width: Math.max(240, Math.min(400, Math.round(el.getBoundingClientRect().width) || 356)),
     });
+
+    paintWhileDrawn(el);
     return true;
   } catch (e) {
     console.error("Couldn't render the Google button:", e);

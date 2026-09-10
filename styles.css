@@ -329,44 +329,81 @@ a {
   font-size: 15px;
 }
 
-/* Rounded off, and clipping what it holds.
+/* We draw the button. Google only fills in the middle of it.
 
-   On a registered origin Google renders its button inside an iframe whose
-   document it paints white and sizes to the width it was asked for, not to
-   the button. Square white corners on a dark page are the giveaway; for an
-   account Google already knows, the pill inside is a different width again,
-   which is how a black button ended up in a white frame. The button is
-   asked for in its light theme (see renderGoogleButton) so the box and the
-   button are the same colour, and this makes the box the right shape. */
+   On a registered origin — the deployed site, not localhost, which is why
+   this looks fine while you are developing — Google renders its button
+   inside an *iframe* served from accounts.google.com, and paints that
+   iframe's own canvas white. Nothing in this stylesheet can reach a
+   cross-origin document, so no amount of `background: transparent` on the
+   wrappers touches it: the white is behind glass. On a light page it is
+   invisible and on a dark one it is a white slab, which is why this only
+   ever looked broken in the dark.
+
+   So the slot stops being an empty frame and becomes the button. It paints
+   the pill, in Google's own colours rather than ours — this element is
+   continuing the shape drawn inside it, and a near-match would show as a
+   seam — and then clips the iframe to well inside where the white is. The
+   margin is generous on purpose: Google draws the iframe twenty pixels
+   wider than the button it was asked for, so clipping it back to the width
+   we asked for cuts ten pixels off each side, against a white ring of about
+   four. Google can move things around a little and the worst case is our
+   pill meeting theirs, dark on dark, instead of the white coming back. */
 .login-btn-slot {
   display: flex;
+  align-items: center;
   justify-content: center;
-  min-height: 44px;
+  box-sizing: border-box;
+  width: 356px;
+  max-width: 100%;
+  height: 40px;
+  margin: 0 auto;
   border-radius: 999px;
+  overflow: hidden;
+}
+
+/* Painted only once Google has been seen to draw the button — see
+   renderGoogleButton. An unpainted slot that failed to fill is an empty gap
+   above the fallback link; a painted one would be a pill that looks like a
+   button and does nothing. */
+.login-btn-slot.has-button {
+  /* Google's filled_black. */
+  background: #202124;
+}
+
+:root[data-theme="light"] .login-btn-slot.has-button {
+  /* Google's outline theme: white, with its own hairline border — which we
+     are clipping off, so this draws it instead. */
+  background: #fff;
+  border: 1px solid #dadce0;
+}
+
+/* The vertical half of the clip. There is less room here than there is
+   across: the iframe is 44 pixels tall around a 40 pixel button, so the
+   white is a two pixel band and taking four is as far as this can go — the
+   white circle the G sits in is nearly the full height of the button, and a
+   sixth pixel starts shaving flats onto it. The slot above stays the
+   button's full 40, so the two together read as one shape: ours around the
+   edges, Google's in the middle, the same colour throughout.
+
+   Only when there is an iframe to clip. On an origin Google has not been
+   told about — localhost, while you are working on this — it renders the
+   button as ordinary elements in this page instead, at the full height of
+   the slot, and cutting eight pixels off that would be trimming the button
+   rather than the box around it. */
+.login-btn-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-btn-inner:has(iframe) {
+  height: 36px;
   overflow: hidden;
 }
 
 .login-btn-slot iframe {
   display: block;
-}
-
-/* Google draws its button into that slot as ordinary elements in this
-   document, and paints one of the containers around it white. On a dark page
-   that is a white frame around a black button — the thing this whole rule
-   exists to remove.
-
-   Which container, and how deep, is not ours to know: for an account Google
-   already recognises it renders a wider "Continue as …" button with more
-   wrappers around it than the plain one has, and counting `> div > div` gets
-   the plain button right and that one wrong. So the target is stated by what
-   it is rather than where it sits — every element that *contains* the
-   button. That is exactly the wrapper chain, at any depth, and it can never
-   be the button itself or the white circle its logo sits in, both of which
-   keep their own colours. */
-.login-btn-slot div:has([role="button"]) {
-  background: transparent !important;
-  box-shadow: none !important;
-  border: 0 !important;
 }
 
 /* A rule with the word centred in the gap, drawn without a background so
