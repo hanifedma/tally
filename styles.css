@@ -350,6 +350,7 @@ a {
    four. Google can move things around a little and the worst case is our
    pill meeting theirs, dark on dark, instead of the white coming back. */
 .login-btn-slot {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -379,6 +380,36 @@ a {
      are clipping off, so this draws it instead. */
   background: #fff;
   border: 1px solid #dadce0;
+}
+
+/* The rim, painted in the button's colour over the top of whatever the
+   iframe put there.
+
+   The clip below takes the same margin off every side, which is right when
+   the button sits in the middle of the canvas Google draws it on. The plain
+   one does. The "Continue as …" card does not quite: there is more white
+   under it than over it, so the same margin that clears the top leaves a
+   sliver at the bottom, and because the clip is a pill and the canvas is a
+   rectangle the sliver shows first where the two curve apart — a thin white
+   crescent at each bottom corner.
+
+   Rather than tune the margin per variant, in a stylesheet that cannot see
+   which one arrived, this covers the last few pixels at the rim. It is the
+   same colour as the pill it sits on, so it is invisible everywhere except
+   where it is hiding something, and it lets clicks through to the button
+   underneath. */
+.login-btn-slot.has-button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 6px #202124;
+  pointer-events: none;
+}
+
+:root[data-theme="light"] .login-btn-slot.has-button::after {
+  box-shadow: inset 0 0 0 6px #fff;
 }
 
 /* The vertical half of the clip. There is less room here than there is

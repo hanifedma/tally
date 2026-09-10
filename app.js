@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=14";
-import * as S from "./store.js?v=14";
-import * as M from "./money.js?v=14";
+} from "./supabase-config.js?v=15";
+import * as S from "./store.js?v=15";
+import * as M from "./money.js?v=15";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=14";
+} from "./i18n.js?v=15";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
