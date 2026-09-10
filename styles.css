@@ -648,6 +648,9 @@ a {
   border-radius: 999px;
   background: var(--surface-2);
   border: 1px solid var(--border);
+  /* A button centres its text unless told otherwise, and the name owns all
+     the spare width — so on a wide screen it drifted to the middle. */
+  text-align: left;
   transition: background 0.14s var(--ease);
 }
 
