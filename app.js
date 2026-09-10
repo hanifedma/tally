@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=17";
-import * as S from "./store.js?v=17";
-import * as M from "./money.js?v=17";
+} from "./supabase-config.js?v=18";
+import * as S from "./store.js?v=18";
+import * as M from "./money.js?v=18";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=17";
+} from "./i18n.js?v=18";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -118,6 +118,46 @@ function icon(name, cls) {
   return svg;
 }
 
+/**
+ * Make a text field group its digits as they are typed: 310575 turns into
+ * 310,575 under the person's hands, without the caret leaving where they
+ * were writing.
+ *
+ * The field's value is the grouped text from the first keystroke on, and
+ * that is what `onInput` is handed. Nothing downstream needs to know: every
+ * reader of an amount strips the separators before parsing it, the same way
+ * the calculator always has.
+ *
+ * @param input    an <input type="text"> holding money
+ * @param onInput  called with the grouped text after each change
+ */
+function groupsDigits(input, onInput) {
+  let was = (input.value = M.groupAmount(input.value));
+  input.addEventListener("input", (e) => {
+    const at = input.selectionStart == null ? input.value.length : input.selectionStart;
+    const g = M.groupAmountEdit(was, input.value, at, e.inputType === "deleteContentForward");
+    if (g.text !== input.value) {
+      input.value = g.text;
+      // Only a focused field has a caret to put back, and setSelectionRange
+      // on an unfocused one is a no-op either way.
+      try {
+        input.setSelectionRange(g.caret, g.caret);
+      } catch {
+        /* a field type that keeps no selection */
+      }
+    }
+    was = g.text;
+    if (onInput) onInput(g.text);
+  });
+  return input;
+}
+
+/** Append to a grouped field as if it had been typed, separators and all. */
+function typeInto(input, text) {
+  input.value += text;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 // ------------------------------------------------------------
 //  State
 // ------------------------------------------------------------
@@ -144,6 +184,8 @@ const state = {
   insightsSide: "expense",
   showArchived: false,
   logLimit: 300,
+  /** Showing one account only, by id — see visibleTransactions. */
+  accountFilter: null,
 };
 
 /** Everything the money functions need to convert into the main currency. */
@@ -961,6 +1003,8 @@ function renderChrome() {
   }
   label.title = t("nav.thisPeriod");
 
+  renderFilterBar();
+
   const rows = periodTransactions();
   const sums = M.totals(rows, ctx());
   $("sumInLabel").textContent = t("sum.income");
@@ -972,6 +1016,46 @@ function renderChrome() {
   $("sumNet").classList.toggle("neg", sums.net < 0);
 
   renderBanner();
+}
+
+/**
+ * The one line that says the ledger is being read through an account.
+ *
+ * It sits in the header rather than in the log, because it governs the
+ * totals above it and the chart on the next tab as well: wherever you are,
+ * this says whose money you are looking at. Tapping it gives everything
+ * back — one control, one meaning, and no way to end up filtered without
+ * being able to see it.
+ */
+function renderFilterBar() {
+  const bar = clear($("filterBar"));
+  const account = accById(state.accountFilter);
+  // An account deleted while its filter was on would otherwise leave the
+  // log looking empty for no visible reason.
+  if (state.accountFilter && !account) state.accountFilter = null;
+  show(bar, !!account);
+  if (!account) return;
+
+  const balance = M.accountBalances([account], state.data.transactions).get(account.id) || 0;
+  bar.append(
+    el(
+      "button",
+      {
+        class: "filter-chip",
+        type: "button",
+        title: t("filter.clear"),
+        onClick: () => filterByAccount(null),
+      },
+      el("span", {
+        class: "chip-icon",
+        style: { background: colorSoft(account.color), color: colorVar(account.color) },
+        text: accountGlyph(account.kind),
+      }),
+      el("span", { class: "filter-name", text: account.name }),
+      el("span", { class: "filter-bal num", text: fmt(balance, account.currency) }),
+      el("span", { class: "filter-x", text: "✕", "aria-hidden": "true" })
+    )
+  );
 }
 
 function renderBanner() {
@@ -1019,9 +1103,36 @@ function missingRates() {
   return [...seen];
 }
 
-function periodTransactions() {
+/**
+ * The ledger as it is currently being looked at.
+ *
+ * One account at a time when a filter is on, which is the whole of what
+ * "show me this account" means: the log, the totals in the header, the
+ * chart and the six-month trend all read from here, so they can never
+ * disagree about which money is being counted.
+ */
+function visibleTransactions() {
+  return M.forAccount(state.data.transactions, state.accountFilter);
+}
+
+/**
+ * @param source  the ledger to cut the period from. Defaults to what is
+ *   being looked at; budgets pass the whole thing, because a limit is set
+ *   across every account and filtering it would quietly understate it.
+ */
+function periodTransactions(source) {
   const p = period();
-  return state.data.transactions.filter((tx) => M.inRange(tx.occurred_on, p.start, p.end));
+  const rows = source || visibleTransactions();
+  return rows.filter((tx) => M.inRange(tx.occurred_on, p.start, p.end));
+}
+
+/** Show one account's money and nothing else, or all of it again. */
+function filterByAccount(id) {
+  state.accountFilter = id || null;
+  // A fresh list, not the middle of the last one.
+  state.logLimit = 300;
+  if (id) state.view = "log";
+  renderAll();
 }
 
 // ------------------------------------------------------------
@@ -1035,7 +1146,7 @@ function renderLog() {
   let rows;
   if (state.searching && state.search.trim()) {
     rows = M.searchTransactions(
-      state.data.transactions,
+      visibleTransactions(),
       state.search,
       state.data.categories,
       state.data.accounts
@@ -1061,21 +1172,32 @@ function renderLog() {
   } else {
     rows = periodTransactions();
     if (!rows.length) {
-      const anyAtAll = state.data.transactions.length > 0;
+      const filtered = accById(state.accountFilter);
+      const anyAtAll = visibleTransactions().length > 0;
       const p = period();
       root.append(
         el(
           "div",
           { class: "empty" },
           icon("empty"),
-          el("h3", { text: anyAtAll ? t("log.emptyMonth.h") : t("log.empty.h") }),
+          el("h3", {
+            text: filtered
+              ? t("log.emptyAccount.h", { name: filtered.name })
+              : anyAtAll
+                ? t("log.emptyMonth.h")
+                : t("log.empty.h"),
+          }),
           el("p", {
-            text: anyAtAll
-              ? t("log.emptyMonth.p", {
-                  start: formatDayShort(p.start),
-                  end: formatDayShort(p.end),
-                })
-              : t("log.empty.p"),
+            text: !anyAtAll && filtered
+              ? // Not "nothing here yet" — there is a ledger, this account
+                // simply has no part in it.
+                t("log.emptyAccount.p", { name: filtered.name })
+              : anyAtAll
+                ? t("log.emptyMonth.p", {
+                    start: formatDayShort(p.start),
+                    end: formatDayShort(p.end),
+                  })
+                : t("log.empty.p"),
           }),
           anyAtAll
             ? null
@@ -1211,7 +1333,10 @@ function renderInsights() {
   const p = period();
   const rows = periodTransactions();
 
-  root.append(renderBudgetCard(rows, p));
+  // Budgets are set across every account, so they are counted across every
+  // account: cutting them to one would show a limit half spent that is
+  // really all spent.
+  root.append(renderBudgetCard(periodTransactions(state.data.transactions), p));
 
   // --- where it went ---
   const side = state.insightsSide;
@@ -1364,7 +1489,6 @@ function renderStats(rows, p) {
   const elapsed =
     today > p.end ? daysInPeriod : today < p.start ? 0 : M.daysBetween(p.start, today) + 1;
   const perDay = elapsed > 0 ? Math.round(sums.expense / elapsed) : 0;
-  const projected = elapsed > 0 ? Math.round(perDay * daysInPeriod) : sums.expense;
 
   const expenses = rows.filter((x) => x.kind === "expense");
   let biggest = null;
@@ -1379,12 +1503,6 @@ function renderStats(rows, p) {
       "dl",
       { class: "stat-grid" },
       el("div", { class: "stat" }, el("dt", { text: t("ins.avgDay") }), el("dd", { text: fmt(perDay) })),
-      el(
-        "div",
-        { class: "stat" },
-        el("dt", { text: t("ins.avgProjected") }),
-        el("dd", { text: fmt(projected) })
-      ),
       biggest
         ? el(
             "div",
@@ -1406,7 +1524,7 @@ function renderStats(rows, p) {
 function renderTrend() {
   const c = ctx();
   const months = M.byPeriod(
-    state.data.transactions,
+    visibleTransactions(),
     state.anchor,
     6,
     state.data.settings.month_start,
@@ -1485,6 +1603,17 @@ function renderBudgetCard(rows, p) {
       el("p", { class: "help", style: { margin: 0 }, text: t("ins.budgetNone.p") })
     );
     return card;
+  }
+
+  const filtered = accById(state.accountFilter);
+  if (filtered) {
+    card.append(
+      el("p", {
+        class: "help",
+        style: { margin: "0 0 12px" },
+        text: t("ins.budgetAllAccounts", { name: filtered.name }),
+      })
+    );
   }
 
   // Where "today" sits in the period, so a bar can be read as ahead or behind
@@ -1594,35 +1723,59 @@ function renderAccounts() {
             c
           )
         : null;
+    const row = el(
+      "button",
+      {
+        // Tapping an account shows its money — the thing anyone opens this
+        // screen to do. Editing it is the pencil beside it, one tap either
+        // way.
+        class: "acct" + (a.archived ? " is-archived" : ""),
+        type: "button",
+        title: t("acc.seeTransactions", { name: a.name }),
+        onClick: () => filterByAccount(a.id),
+      },
+      el("span", {
+        class: "chip-icon",
+        style: { background: colorSoft(a.color), color: colorVar(a.color) },
+        text: accountGlyph(a.kind),
+      }),
+      el(
+        "span",
+        null,
+        el("span", { class: "acct-name", text: a.name }),
+        el("span", {
+          class: "acct-sub",
+          text:
+            t("acc.kind." + a.kind) +
+            " · " +
+            a.currency +
+            (a.archived ? " · " + t("acc.archived") : ""),
+        })
+      ),
+      el(
+        "span",
+        null,
+        el("span", { class: "acct-bal num" + (bal < 0 ? " neg" : ""), text: fmt(bal, a.currency) }),
+        converted != null
+          ? el("span", { class: "tx-alt", text: t("acc.inMain", { amount: fmt(converted) }) })
+          : null
+      )
+    );
     list.append(
       el(
-        "button",
-        { class: "acct" + (a.archived ? " is-archived" : ""), type: "button", onClick: () => openAccount(a) },
-        el("span", {
-          class: "chip-icon",
-          style: { background: colorSoft(a.color), color: colorVar(a.color) },
-          text: accountGlyph(a.kind),
-        }),
+        "div",
+        { class: "acct-row" },
+        row,
         el(
-          "span",
-          null,
-          el("span", { class: "acct-name", text: a.name }),
-          el("span", {
-            class: "acct-sub",
-            text:
-              t("acc.kind." + a.kind) +
-              " · " +
-              a.currency +
-              (a.archived ? " · " + t("acc.archived") : ""),
-          })
-        ),
-        el(
-          "span",
-          null,
-          el("span", { class: "acct-bal num" + (bal < 0 ? " neg" : ""), text: fmt(bal, a.currency) }),
-          converted != null
-            ? el("span", { class: "tx-alt", text: t("acc.inMain", { amount: fmt(converted) }) })
-            : null
+          "button",
+          {
+            class: "icon-btn acct-edit",
+            type: "button",
+            title: t("acc.edit"),
+            "aria-label": t("acc.edit") + " · " + a.name,
+            onClick: () => openAccount(a),
+          },
+          icon("edit")
         )
       )
     );
@@ -1673,10 +1826,12 @@ function openTransaction(existing) {
   const draft = existing
     ? {
         ...existing,
-        amount: M.minorToInput(existing.amount_minor, existing.currency),
+        amount: M.groupAmount(M.minorToInput(existing.amount_minor, existing.currency)),
         // Text, like the amount: blank means no fee, so an untouched
         // transfer does not come back reading "0".
-        fee: existing.fee_minor ? M.minorToInput(existing.fee_minor, existing.currency) : "",
+        fee: existing.fee_minor
+          ? M.groupAmount(M.minorToInput(existing.fee_minor, existing.currency))
+          : "",
       }
     : {
         id: M.uuid(),
@@ -1710,6 +1865,14 @@ function openTransaction(existing) {
         draft.currency = acc.currency;
         draft.rate = M.rateForNew(acc.currency, c);
       }
+    }
+    // Unless one account is being looked at, in which case that is
+    // overwhelmingly the one being written down.
+    const filtered = accById(state.accountFilter);
+    if (filtered && !filtered.archived) {
+      draft.account_id = filtered.id;
+      draft.currency = filtered.currency;
+      draft.rate = M.rateForNew(filtered.currency, c);
     }
   }
 
@@ -1776,7 +1939,7 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
       draft.to_account_id,
       draft.currency
     );
-    draft.fee = was ? M.minorToInput(was, draft.currency) : "";
+    draft.fee = was ? M.groupAmount(M.minorToInput(was, draft.currency)) : "";
   };
 
   const body = el("div", { class: "sheet-body" });
@@ -1871,8 +2034,8 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
     altLine.textContent = parts.join("  ·  ");
   };
 
-  amountInput.addEventListener("input", () => {
-    draft.amount = amountInput.value;
+  groupsDigits(amountInput, (text) => {
+    draft.amount = text;
     refreshAlt();
   });
 
@@ -1884,9 +2047,9 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
         text: op,
         "aria-label": op === "000" ? "000" : op,
         onClick: () => {
-          amountInput.value += op;
-          draft.amount = amountInput.value;
-          refreshAlt();
+          // Through the field's own input path, so what the key adds is
+          // grouped exactly as it would have been if it had been typed.
+          typeInto(amountInput, op);
           amountInput.focus();
         },
       })
@@ -2024,8 +2187,8 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
       value: draft.fee || "",
       placeholder: M.minorToInput(0, currency),
     });
-    feeInput.addEventListener("input", () => {
-      draft.fee = feeInput.value;
+    groupsDigits(feeInput, (text) => {
+      draft.fee = text;
       // From here on this transfer's fee is the person's, not the ledger's.
       view.feeTouched = true;
       setError(null);
@@ -2054,21 +2217,23 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
         style: { textAlign: "right" },
         value:
           draft.to_amount_minor != null
-            ? M.minorToInput(draft.to_amount_minor, toAccount.currency)
+            ? M.groupAmount(M.minorToInput(draft.to_amount_minor, toAccount.currency))
             : "",
-        placeholder: M.minorToInput(
-          M.convertMinor(
-            M.parseAmountToMinor(draft.amount, currency) || 0,
-            currency,
-            toAccount.currency,
-            c
-          ),
-          toAccount.currency
+        placeholder: M.groupAmount(
+          M.minorToInput(
+            M.convertMinor(
+              M.parseAmountToMinor(draft.amount, currency) || 0,
+              currency,
+              toAccount.currency,
+              c
+            ),
+            toAccount.currency
+          )
         ),
       });
-      landedInput.addEventListener("input", () => {
-        const v = M.parseAmountToMinor(landedInput.value, toAccount.currency);
-        draft.to_amount_minor = landedInput.value.trim() === "" ? null : v;
+      groupsDigits(landedInput, (text) => {
+        const v = M.parseAmountToMinor(text, toAccount.currency);
+        draft.to_amount_minor = text.trim() === "" ? null : v;
       });
       body.append(
         el(
@@ -2451,7 +2616,7 @@ function openAccount(existing) {
         // character in the way: everyone who wants a starting balance has to
         // delete it before typing one.
         opening: existing.opening_minor
-          ? M.minorToInput(existing.opening_minor, existing.currency)
+          ? M.groupAmount(M.minorToInput(existing.opening_minor, existing.currency))
           : "",
       }
     : {
@@ -2512,7 +2677,7 @@ function openAccount(existing) {
         value: draft.opening,
         placeholder: "0",
       });
-      openingInput.addEventListener("input", () => (draft.opening = openingInput.value));
+      groupsDigits(openingInput, (text) => (draft.opening = text));
 
       const colours = el("div", { class: "colours" });
       for (const name of M.COLORS) {
@@ -3016,6 +3181,7 @@ function openBudgets() {
         placeholder: t("bud.none"),
         value: existing ? M.minorToInput(existing.amount_minor, existing.currency) : "",
       });
+      groupsDigits(input);
       inputs.set(categoryId || "", { input, existing });
       return el(
         "div",

@@ -627,6 +627,71 @@ a {
 .summary .v-expense { color: var(--expense); }
 .summary .v-net.neg { color: var(--expense); }
 
+/* ---------- one account at a time ---------- */
+
+/* Sits under the totals it governs, so that what is being counted is never
+   a question. It is a single button: tapping it gives every account back. */
+.filter-bar {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 12px 8px;
+  display: flex;
+}
+
+.filter-chip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  transition: background 0.14s var(--ease);
+}
+
+.filter-chip:hover { background: var(--surface-3); }
+
+.filter-chip .chip-icon {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  border-radius: 8px;
+  flex: none;
+}
+
+/* The name is the part that gives way when there is not enough room, and
+   the balance never shortens. That way round on purpose: a shortened name
+   still says which account this is, where a shortened number would be a
+   wrong number. */
+.filter-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-bal {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.filter-x {
+  flex: none;
+  font-size: 12px;
+  color: var(--faint);
+  padding-left: 2px;
+}
+
 /* ---------- tabs ---------- */
 
 .tabs {
@@ -1196,6 +1261,11 @@ a {
 .acct:last-child { border-bottom: 0; }
 .acct:hover { background: var(--surface-2); }
 
+/* A grid column will not shrink below its content unless told to, and a
+   long account name would otherwise push the balance off the row. The name
+   is the part that can be shortened without losing anything. */
+.acct > span:nth-child(2) { min-width: 0; }
+
 .acct-name {
   display: block;
   font-size: 14.5px;
@@ -1209,6 +1279,9 @@ a {
   display: block;
   font-size: 12.5px;
   color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .acct-bal {
@@ -1222,6 +1295,36 @@ a {
 .acct-bal.neg { color: var(--expense); }
 
 .acct.is-archived { opacity: 0.55; }
+
+/* The row is two controls: the account itself, which shows its money, and
+   a pencil for changing it. The border belongs to the pair. */
+.acct-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.acct-row:last-child { border-bottom: 0; }
+.acct-row:hover { background: var(--surface-2); }
+
+.acct-row .acct {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+
+.acct-row .acct:hover { background: none; }
+
+.acct-edit {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  margin-right: 8px;
+  color: var(--faint);
+}
+
+.acct-edit:hover { color: var(--text); }
+.acct-edit svg { width: 18px; height: 18px; }
 
 /* ============================================================
    Buttons

@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=17";
+import * as M from "./money.js?v=18";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -184,6 +184,72 @@ test("the amount field is not padded with zeros it does not need", () => {
   eq(M.minorToInput(-20000000, "KRW"), "-20000", "a credit card's opening balance");
 });
 
+
+// ------------------------------------------------------------
+//  Thousands separators while typing
+// ------------------------------------------------------------
+
+test("an amount gets its separators as it is typed", () => {
+  eq(M.groupAmount("310575"), "310,575");
+  eq(M.groupAmount("1000000.54"), "1,000,000.54");
+  eq(M.groupAmount("999"), "999", "three digits need none");
+  eq(M.groupAmount("1000"), "1,000");
+  eq(M.groupAmount(""), "");
+  eq(M.groupAmount("0"), "0");
+  // The places after the point are a fraction, not thousands.
+  eq(M.groupAmount("1000.5555"), "1,000.5555");
+  eq(M.groupAmount(".5555"), ".5555");
+  // Half-typed, and still legible.
+  eq(M.groupAmount("1000."), "1,000.");
+  eq(M.groupAmount("-20000"), "-20,000", "a credit card's opening balance");
+});
+
+test("separators do not disturb the arithmetic the field allows", () => {
+  eq(M.groupAmount("1000+2000"), "1,000+2,000");
+  eq(M.groupAmount("12000×3"), "12,000×3");
+  eq(M.groupAmount("(10000+2)÷4"), "(10,000+2)÷4");
+  eq(M.groupAmount("1000+"), "1,000+", "mid-sum");
+  // Whatever it does to the text, it may not change what the text means.
+  for (const src of ["310575", "1000000.54", "1000+2000", "12000×3", "(10000+2)÷4", "0.883"]) {
+    eq(M.parseAmountToMinor(M.groupAmount(src), "IDR"), M.parseAmountToMinor(src, "IDR"), src);
+  }
+});
+
+test("grouping an amount twice changes nothing the second time", () => {
+  for (const src of ["1000000.54", "1,000,000.54", "1000+2000", "-20000", "1000."]) {
+    eq(M.groupAmount(M.groupAmount(src)), M.groupAmount(src), src);
+  }
+  // Separators put in by hand are re-placed, never trusted.
+  eq(M.groupAmount("1,0,0,0"), "1,000");
+  eq(M.groupAmount("310,575000"), "310,575,000", "what the 000 key leaves behind");
+});
+
+test("the caret stays with what was written, not with the separators", () => {
+  // Typing the fourth digit of 9999: the caret stays at the end.
+  eq(M.groupAmountEdit("999", "9999", 4), { text: "9,999", caret: 5 });
+  // A digit typed into the middle of 1,000 at "1,0|00".
+  eq(M.groupAmountEdit("1,000", "1,0500", 4), { text: "10,500", caret: 4 });
+  // Nothing to move: three digits need no separator.
+  eq(M.groupAmountEdit("99", "999", 3), { text: "999", caret: 3 });
+  // A caret at the very start stays at the very start.
+  eq(M.groupAmountEdit("1000", "21000", 1), { text: "21,000", caret: 1 });
+  // A comma typed by hand becomes the app's, and the caret follows the text.
+  eq(M.groupAmountEdit("1000", "1000,", 5), { text: "1,000", caret: 5 });
+});
+
+test("backspacing a separator takes the digit it was hiding behind", () => {
+  // "1,234,|567" — the key landed on the separator, so it takes the 4.
+  eq(M.groupAmountEdit("1,234,567", "1,234567", 5), { text: "123,567", caret: 3 });
+  // A separator with nothing but a digit in front of it.
+  eq(M.groupAmountEdit("1,000", "1000", 1), { text: "000", caret: 0 });
+  // Forward delete takes the digit on its other side.
+  eq(M.groupAmountEdit("1,234,567", "1,234567", 5, true), { text: "123,467", caret: 5 });
+  // An ordinary backspace is not mistaken for one: 10,000 losing its last
+  // digit is 1,000, with every digit the person still typed intact.
+  eq(M.groupAmountEdit("10,000", "10,00", 5), { text: "1,000", caret: 5 });
+  // Nor is deleting an operator, which leaves the same digits behind.
+  eq(M.groupAmountEdit("1000+200", "1000200", 4), { text: "1,000,200", caret: 5 });
+});
 // ------------------------------------------------------------
 //  Dates
 // ------------------------------------------------------------
@@ -711,6 +777,24 @@ test("search reaches notes, categories and accounts", () => {
   eq(M.searchTransactions(rows, "food", categories, accounts).map((r) => r.id), ["1"],
      "one row matches on its note, its category, or both");
   eq(M.searchTransactions(rows, "", categories, accounts).length, 2, "an empty query filters nothing");
+});
+
+test("one account's transactions are everything that touched it", () => {
+  const rows = [
+    tx({ id: "a", kind: "expense", account_id: "cash" }),
+    tx({ id: "b", kind: "expense", account_id: "bank" }),
+    tx({ id: "c", kind: "transfer", account_id: "bank", to_account_id: "cash" }),
+    tx({ id: "d", kind: "transfer", account_id: "cash", to_account_id: "bank" }),
+    tx({ id: "e", kind: "income", account_id: "bank" }),
+  ];
+  // Both ends of a transfer count: money that left and money that arrived.
+  eq(M.forAccount(rows, "cash").map((r) => r.id), ["a", "c", "d"]);
+  eq(M.forAccount(rows, "bank").map((r) => r.id), ["b", "c", "d", "e"]);
+  // An account with no history is empty, not everything.
+  eq(M.forAccount(rows, "nowhere").map((r) => r.id), []);
+  // No account named is no filter at all — the same list, untouched.
+  eq(M.forAccount(rows, null), rows);
+  eq(M.forAccount(rows, ""), rows);
 });
 
 // ------------------------------------------------------------

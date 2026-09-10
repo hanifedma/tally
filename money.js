@@ -348,6 +348,118 @@ export function minorToInput(minor, code) {
 }
 
 // ------------------------------------------------------------
+//  Thousands separators, while it is still being typed
+// ------------------------------------------------------------
+
+const GROUP_SEPARATOR = ",";
+
+/**
+ * Put the separators into an amount someone is writing: "1000000.54" reads
+ * back "1,000,000.54" before they have finished the sentence.
+ *
+ * Only the whole part of a number is grouped — the places after the point
+ * are a fraction, not thousands, so "1000.5555" is "1,000.5555" and never
+ * "1,000.555,5". Everything that is not a digit stays exactly where it
+ * stood, so the arithmetic this field allows still reads as arithmetic:
+ * "1000+2000" becomes "1,000+2,000".
+ *
+ * Separators already in the text are dropped first and put back by the
+ * same rule. They belong to the app, not to the person typing: every
+ * reader of this field strips them before parsing, so where they sit can
+ * never change what the amount means.
+ */
+export function groupAmount(input) {
+  // Every separator comes out before any goes back in. Grouping what is
+  // already grouped, digit run by digit run, would find nothing longer than
+  // three and leave "1,000,000" exactly as it was.
+  const src = String(input == null ? "" : input).split(GROUP_SEPARATOR).join("");
+  const isDigit = (ch) => ch >= "0" && ch <= "9";
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (isDigit(ch)) {
+      let j = i;
+      while (j < src.length && isDigit(src[j])) j++;
+      out += src.slice(i, j).replace(/\B(?=(\d{3})+$)/g, GROUP_SEPARATOR);
+      i = j;
+    } else {
+      out += ch;
+      i++;
+      // The point belongs to the number in front of it, and what follows it
+      // is a fraction — passed through untouched.
+      if (ch === ".") {
+        while (i < src.length && isDigit(src[i])) out += src[i++];
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The separator that went missing between `before` and `raw`, or -1.
+ *
+ * True only when the two differ by exactly one separator and nothing else —
+ * a keystroke that landed on a comma and took it away.
+ */
+function separatorRubbedOut(before, raw) {
+  if (before.length !== raw.length + 1) return -1;
+  let i = 0;
+  while (i < raw.length && before[i] === raw[i]) i++;
+  if (before[i] !== GROUP_SEPARATOR) return -1;
+  return before.slice(i + 1) === raw.slice(i) ? i : -1;
+}
+
+/**
+ * The same grouping, for a field being typed into: it also says where the
+ * caret belongs once the separators have moved.
+ *
+ * The caret is placed by counting, not by arithmetic on lengths: whatever
+ * the person had written to the left of it is still to the left of it
+ * afterwards, however many separators came or went in between.
+ *
+ * A separator is the app's own, so rubbing one out would only put it
+ * straight back and the key would appear to have done nothing. A backspace
+ * that lands on one therefore takes the digit in front of it — which is
+ * what pressing it meant — and a forward delete takes the digit after.
+ *
+ * @param before   what the field held before this keystroke
+ * @param raw      what it holds now
+ * @param caret    where the caret sits in `raw`
+ * @param forward  true when the key was Delete rather than Backspace
+ * @returns { text, caret }
+ */
+export function groupAmountEdit(before, raw, caret, forward = false) {
+  let src = String(raw == null ? "" : raw);
+  let at = Math.max(0, Math.min(Number(caret) || 0, src.length));
+
+  const gone = separatorRubbedOut(String(before == null ? "" : before), src);
+  if (gone >= 0) {
+    // `gone` is where the separator stood. In `src`, which no longer has
+    // it, the digit before it sits at gone - 1 and the one after at gone.
+    const take = forward ? gone : gone - 1;
+    if (take >= 0 && take < src.length) {
+      src = src.slice(0, take) + src.slice(take + 1);
+      at = take;
+    }
+  }
+
+  const text = groupAmount(src);
+  let want = 0;
+  for (let i = 0; i < at; i++) if (src[i] !== GROUP_SEPARATOR) want++;
+  let seen = 0;
+  let out = text.length;
+  for (let i = 0; i < text.length; i++) {
+    if (seen === want) {
+      out = i;
+      break;
+    }
+    if (text[i] !== GROUP_SEPARATOR) seen++;
+  }
+  return { text, caret: out };
+}
+
+// ------------------------------------------------------------
 //  Exchange
 //
 //  `rates` maps a currency to what one of its major units is worth in the
@@ -921,6 +1033,23 @@ export function lastTransferFee(transactions, fromId, toId, currency) {
     if (!best || compareTx(t, best) < 0) best = t;
   }
   return best ? best.fee_minor || 0 : null;
+}
+
+/**
+ * Everything that touched one account.
+ *
+ * Both ends of a transfer count. Money that left this account and money
+ * that arrived in it are equally part of its story, and a list that showed
+ * only one direction would not add up to the balance the account reports.
+ *
+ * No account named means no filtering: the caller hands the whole ledger
+ * straight back rather than having to ask whether a filter is on.
+ */
+export function forAccount(transactions, accountId) {
+  if (!accountId) return transactions;
+  return transactions.filter(
+    (t) => t.account_id === accountId || t.to_account_id === accountId
+  );
 }
 
 /** Free-text search across notes, category names and account names. */
