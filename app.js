@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=15";
-import * as S from "./store.js?v=15";
-import * as M from "./money.js?v=15";
+} from "./supabase-config.js?v=16";
+import * as S from "./store.js?v=16";
+import * as M from "./money.js?v=16";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=15";
+} from "./i18n.js?v=16";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -1683,7 +1683,10 @@ function openTransaction(existing) {
   }
 
   // What the sheet needs to remember between rebuilds, and nothing more.
-  const view = { errorKey: null, first: true };
+  // `feeTouched` is here rather than on the draft because it is a fact about
+  // this editing session, not about the transaction: once the fee has been
+  // typed in, no later change of account may overwrite it.
+  const view = { errorKey: null, first: true, feeTouched: false };
   let sheet = null;
   const rerender = () => sheet && sheet.rebuild();
 
@@ -1706,6 +1709,26 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
   const currency = account ? account.currency : c.main_currency;
   draft.currency = currency;
 
+  /**
+   * Fill the fee in from the last time this same move was made.
+   *
+   * Only for a new transfer, and only until the fee has been typed in: an
+   * existing transaction already knows what it cost, and a number the
+   * person put there themselves outranks anything the ledger remembers.
+   * A pair with no history, or whose last transfer was free, leaves the
+   * field blank rather than writing a nought into it.
+   */
+  const suggestFee = () => {
+    if (existing || view.feeTouched) return;
+    const was = M.lastTransferFee(
+      state.data.transactions,
+      draft.account_id,
+      draft.to_account_id,
+      draft.currency
+    );
+    draft.fee = was ? M.minorToInput(was, draft.currency) : "";
+  };
+
   const body = el("div", { class: "sheet-body" });
 
   // ---- kind ----
@@ -1726,10 +1749,14 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
               const other = accounts.find((a) => a.id !== draft.account_id);
               draft.to_account_id = other ? other.id : null;
             }
+            suggestFee();
           } else {
             draft.to_account_id = null;
             draft.to_amount_minor = null;
             draft.fee = "";
+            // The typed fee went with it, so coming back to a transfer
+            // starts from the ledger again rather than from a blank.
+            view.feeTouched = false;
             // A category from the other side of the ledger would be wrong.
             const cat = catById(draft.category_id);
             if (!cat || cat.kind !== kind) draft.category_id = null;
@@ -1914,6 +1941,7 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
           draft.rate = M.rateForNew(acc.currency, c);
           draft.rate_base = c.main_currency;
         }
+        suggestFee();
         setError(null);
         rerender();
       },
@@ -1928,6 +1956,7 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
         draft.to_account_id,
         (id) => {
           draft.to_account_id = id;
+          suggestFee();
           setError(null);
           rerender();
         },
@@ -1947,6 +1976,8 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
     });
     feeInput.addEventListener("input", () => {
       draft.fee = feeInput.value;
+      // From here on this transfer's fee is the person's, not the ledger's.
+      view.feeTouched = true;
       setError(null);
     });
     const feeMinor = M.parseAmountToMinor(draft.fee || "", currency);
@@ -2159,6 +2190,12 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender) {
       draft.fee = "";
       draft.to_amount_minor = null;
       draft.occurred_min = M.minuteOfDay();
+      // The one just filed is now the last transfer between this pair, so
+      // the next one starts from what this one cost — including when what
+      // it cost was nothing. Typing a fee governs the transfer it was typed
+      // for, not every transfer after it.
+      view.feeTouched = false;
+      suggestFee();
       rerender();
     } else {
       closeIt();

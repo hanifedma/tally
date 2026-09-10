@@ -893,6 +893,36 @@ export function noteSuggestions(transactions, query, limit = 8) {
   return out;
 }
 
+/**
+ * What the last transfer between these two accounts cost, in minor units of
+ * the sending account's currency, or null if there is nothing to go on.
+ *
+ * Direction is part of the question. A bank charges to send money to a
+ * wallet and often charges nothing to pull it back, so A→B and B→A are two
+ * different answers and must not be averaged into one.
+ *
+ * So is the currency. The number remembered is minor units of whatever the
+ * sending account held at the time, and an account whose currency has been
+ * changed since cannot be quoted its old fee — 500 rupiah is not 500 won.
+ *
+ * The most recent transfer wins outright, including when it was free. The
+ * last time this move cost nothing is the best evidence there is that it is
+ * free now, and an older fee should not be allowed to resurrect itself
+ * behind a bank's fee change.
+ */
+export function lastTransferFee(transactions, fromId, toId, currency) {
+  if (!fromId || !toId || fromId === toId) return null;
+  let best = null;
+  for (const t of transactions) {
+    if (t.deleted_at) continue;
+    if (t.kind !== "transfer") continue;
+    if (t.account_id !== fromId || t.to_account_id !== toId) continue;
+    if (currency && t.currency !== currency) continue;
+    if (!best || compareTx(t, best) < 0) best = t;
+  }
+  return best ? best.fee_minor || 0 : null;
+}
+
 /** Free-text search across notes, category names and account names. */
 export function searchTransactions(transactions, query, categories, accounts) {
   const q = String(query || "").trim().toLowerCase();

@@ -555,6 +555,21 @@ a {
   gap: 4px;
 }
 
+/* Bigger than the header's buttons, which is what .icon-btn is sized for.
+   A month back and a month on are the two most-tapped controls in the app,
+   and 34 square is both meaner than the header buttons deserve to be shared
+   with and under the 44 a fingertip actually wants. */
+.period .icon-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.period .icon-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
 .period-label {
   min-width: 148px;
   text-align: center;

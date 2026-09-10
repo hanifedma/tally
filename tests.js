@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=15";
+import * as M from "./money.js?v=16";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -427,6 +427,64 @@ test("a fee on a cross-currency transfer is charged in the sending currency", ()
   const b = M.accountBalances(accounts, rows);
   eq(b.get("a1"), 100000 - 100000 - 5000, "won, because the won account paid it");
   eq(b.get("a2"), 50000 + 1142857, "the rupiah side is untouched by it");
+});
+
+test("a transfer remembers what the last one between the same two cost", () => {
+  const move = (over) =>
+    tx({ kind: "transfer", amount_minor: 30000, currency: "KRW", account_id: "a1", to_account_id: "a3", ...over });
+
+  const rows = [move({ id: "old", fee_minor: 300, occurred_on: "2026-08-01" })];
+  eq(M.lastTransferFee(rows, "a1", "a3", "KRW"), 300);
+
+  rows.push(move({ id: "new", fee_minor: 500, occurred_on: "2026-08-20" }));
+  eq(M.lastTransferFee(rows, "a1", "a3", "KRW"), 500, "the most recent one, not the first");
+
+  eq(M.lastTransferFee(rows, "a1", "a2", "KRW"), null, "a pair never moved between has nothing to say");
+  eq(M.lastTransferFee(rows, "a1", "a1", "KRW"), null, "and neither has an account with itself");
+});
+
+test("the way round is part of the question a remembered fee answers", () => {
+  const rows = [
+    tx({ id: "out", kind: "transfer", amount_minor: 30000, fee_minor: 500, currency: "KRW", account_id: "a1", to_account_id: "a3" }),
+  ];
+  eq(M.lastTransferFee(rows, "a1", "a3", "KRW"), 500);
+  eq(
+    M.lastTransferFee(rows, "a3", "a1", "KRW"),
+    null,
+    "a bank that charges to send need not charge to receive"
+  );
+});
+
+test("a free transfer is remembered as free, not as the fee before it", () => {
+  const move = (over) =>
+    tx({ kind: "transfer", amount_minor: 30000, currency: "KRW", account_id: "a1", to_account_id: "a3", ...over });
+  const rows = [
+    move({ id: "charged", fee_minor: 500, occurred_on: "2026-08-01" }),
+    move({ id: "free", fee_minor: 0, occurred_on: "2026-08-20" }),
+  ];
+  eq(M.lastTransferFee(rows, "a1", "a3", "KRW"), 0, "the bank stopped charging, and this says so");
+});
+
+test("a remembered fee is not carried across a change of currency or a deletion", () => {
+  const move = (over) =>
+    tx({ kind: "transfer", amount_minor: 30000, currency: "KRW", account_id: "a1", to_account_id: "a3", ...over });
+
+  eq(
+    M.lastTransferFee([move({ id: "won", fee_minor: 500 })], "a1", "a3", "IDR"),
+    null,
+    "500 won is not 500 rupiah"
+  );
+  eq(
+    M.lastTransferFee([move({ id: "gone", fee_minor: 500, deleted_at: "2026-08-21T00:00:00Z" })], "a1", "a3", "KRW"),
+    null,
+    "a deleted transfer is not evidence of anything"
+  );
+
+  const mixed = [
+    move({ id: "won", fee_minor: 500, occurred_on: "2026-08-20" }),
+    move({ id: "rupiah", fee_minor: 7000, currency: "IDR", occurred_on: "2026-08-01" }),
+  ];
+  eq(M.lastTransferFee(mixed, "a1", "a3", "IDR"), 7000, "the last one in the currency being asked about");
 });
 
 test("only a transfer can carry a fee", () => {
