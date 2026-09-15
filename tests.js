@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=19";
+import * as M from "./money.js?v=20";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -795,6 +795,79 @@ test("one account's transactions are everything that touched it", () => {
   // No account named is no filter at all — the same list, untouched.
   eq(M.forAccount(rows, null), rows);
   eq(M.forAccount(rows, ""), rows);
+});
+
+// ------------------------------------------------------------
+//  Rows that arrive in the wrong table
+// ------------------------------------------------------------
+
+test("a realtime change is taken only by the table it belongs to", () => {
+  // Every column each table really sends, as schema.sql defines them.
+  const rows = {
+    categories: { id: "c", user_id: "u", name: "Freelance", kind: "income", icon: "💻", color: "teal",
+      archived: false, position: 3, created_at: "x", updated_at: "y", deleted_at: null },
+    transactions: { id: "t", user_id: "u", kind: "expense", amount_minor: 5000, currency: "IDR", rate: 1,
+      rate_base: "IDR", account_id: "a", to_account_id: null, to_amount_minor: null, fee_minor: 0,
+      category_id: "c", note: "", occurred_on: "2026-09-10", occurred_min: 600, created_at: "x",
+      updated_at: "y", deleted_at: null },
+    accounts: { id: "a", user_id: "u", name: "Cash", kind: "cash", currency: "IDR", opening_minor: 0,
+      color: "green", archived: false, position: 0, created_at: "x", updated_at: "y", deleted_at: null },
+    budgets: { id: "b", user_id: "u", category_id: "c", amount_minor: 100000, currency: "IDR",
+      created_at: "x", updated_at: "y", deleted_at: null },
+    settings: { user_id: "u", main_currency: "IDR", theme: "dark", lang: "en", week_start: 1,
+      month_start: 1, rates: {}, created_at: "x", updated_at: "y" },
+  };
+  for (const [table, row] of Object.entries(rows)) {
+    for (const other of Object.keys(rows)) {
+      eq(M.rowFitsTable(other, row), other === table, table + " row read as " + other);
+    }
+  }
+  eq(M.rowFitsTable("categories", { id: "c" }), false, "an id alone is not a row");
+  eq(M.rowFitsTable("categories", null), false);
+  eq(M.rowFitsTable("nowhere", rows.categories), false);
+});
+
+test("a row copied into the wrong table is found, and the real one kept", () => {
+  const category = M.normalizeCategory({ id: "c1", name: "Freelance", kind: "income", icon: "💻",
+    color: "teal", position: 4, created_at: "2026-09-01T00:00:00Z" });
+  const spent = tx({ id: "t1", kind: "expense", amount_minor: 5000000, currency: "IDR",
+    account_id: "a1", category_id: "c9", created_at: "2026-09-02T00:00:00Z" });
+  const bank = M.normalizeAccount({ id: "a1", name: "Bank Mandiri", kind: "bank", currency: "IDR",
+    color: "blue", position: 1, created_at: "2026-08-01T00:00:00Z" });
+  // What the mix-up made: the category as an account ("Other"-style) and as
+  // a "+₩0" income; the transaction as a nameless account, a nameless
+  // category and a budget the size of the purchase.
+  const live = {
+    accounts: [bank, M.normalizeAccount(category), M.normalizeAccount(spent)],
+    categories: [category, M.normalizeCategory(spent)],
+    transactions: [spent, M.normalizeTx(category)],
+    budgets: [M.normalizeBudget(spent)],
+  };
+  const found = M.strayCopies(live).map((s) => s.table + ":" + s.id).sort();
+  eq(found, ["accounts:c1", "accounts:t1", "budgets:t1", "categories:t1", "transactions:c1"]);
+});
+
+test("when both copies look alike, the ledger decides, and doubt leaves both alone", () => {
+  // A won Cash account is exactly what a category called Cash would become,
+  // and the other way round.
+  const account = M.normalizeAccount({ id: "x1", name: "Cash", kind: "cash", currency: "KRW",
+    color: "green", position: 0, created_at: "2026-08-01T00:00:00Z" });
+  const live = { accounts: [account], categories: [M.normalizeCategory(account)], transactions: [], budgets: [] };
+  eq(M.strayCopies(live), [], "nothing says which is real");
+  eq(M.strayCopies(live, new Map([["x1", "accounts"]])), [{ table: "categories", id: "x1" }],
+    "a starter's id says");
+  const used = { ...live, transactions: [tx({ id: "t5", account_id: "x1", amount_minor: 1000 })] };
+  eq(M.strayCopies(used), [{ table: "categories", id: "x1" }], "money filed under it says");
+});
+
+test("a real row changed since its copy was made is never taken for the copy", () => {
+  const before = M.normalizeCategory({ id: "c2", name: "Other", kind: "income", icon: "•",
+    color: "gray", position: 9, created_at: "2026-09-01T00:00:00Z" });
+  const strayAccount = M.normalizeAccount(before);
+  const renamed = { ...before, name: "Misc income" };
+  eq(M.strayCopies({ accounts: [strayAccount], categories: [renamed], transactions: [], budgets: [] }), []);
+  // Rows with ids of their own are never in question at all.
+  eq(M.strayCopies({ accounts: [strayAccount], categories: [], transactions: [], budgets: [] }), []);
 });
 
 // ------------------------------------------------------------

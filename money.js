@@ -1036,6 +1036,131 @@ export function lastTransferFee(transactions, fromId, toId, currency) {
 }
 
 /**
+ * The columns that say which table a row came from.
+ *
+ * Each table has one no other table has — a category is the only row with an
+ * icon, an account the only one with an opening balance, a transaction the
+ * only one with a date — and a budget is the row with an amount and a
+ * category but no date.
+ *
+ * Checked against every change the realtime channel delivers, because the
+ * channel does not always hand a change to the listener for its own table:
+ * until the server has given a listener its id, realtime-js passes that
+ * listener every change on the channel. A category taken for a transaction is
+ * a "+₩0" row nobody entered; taken for an account, an account called
+ * "Other"; and a transaction taken for a category is a category with no name.
+ */
+const TABLE_SIGNATURE = {
+  settings: ["main_currency"],
+  accounts: ["opening_minor"],
+  categories: ["icon"],
+  transactions: ["occurred_on"],
+  budgets: ["amount_minor", "category_id"],
+};
+
+/** Does this raw row, as the server sent it, have the shape of a row of `table`? */
+export function rowFitsTable(table, raw) {
+  const own = TABLE_SIGNATURE[table];
+  if (!own || !raw || typeof raw !== "object") return false;
+  if (!own.every((column) => column in raw)) return false;
+  // A transaction has an amount and a category too, so a budget is also told
+  // apart by what it lacks.
+  return Object.entries(TABLE_SIGNATURE).every(
+    ([other, columns]) =>
+      other === table || other === "budgets" || !columns.some((column) => column in raw)
+  );
+}
+
+const NORMALIZERS = {
+  accounts: normalizeAccount,
+  categories: normalizeCategory,
+  transactions: normalizeTx,
+  budgets: normalizeBudget,
+};
+
+// What a copy is not expected to share with the row it was made from: the
+// server stamps its own time on every write, a reorder renumbers positions,
+// and a transaction made out of anything else is dated the day it was made.
+const COPY_IGNORES = new Set(["updated_at", "user_id", "position", "occurred_on"]);
+
+/** Is `row`, in `table`, exactly what reading `from` as a row of that table produces? */
+function madeFrom(table, row, from) {
+  const made = NORMALIZERS[table](from);
+  return Object.keys(made).every(
+    (key) => COPY_IGNORES.has(key) || JSON.stringify(made[key]) === JSON.stringify(row[key])
+  );
+}
+
+/**
+ * Rows that are really another table's row, read as this one — what the
+ * realtime mix-up described at rowFitsTable left behind, and what a later
+ * sync may already have written back to the server.
+ *
+ * An id belongs to one table. They are random UUIDs, so the same id in two
+ * tables can only be one row copied into the other. Which copy is the real
+ * one is decided by what the copy could not have made up: a row that is,
+ * field for field, the other read through this table's defaults is the copy.
+ * When both could be — a won Cash account and the category it became look
+ * alike either way round — the ledger settles it: a starter's id says which
+ * table made it, and an id a transaction files money under is an account or a
+ * category. Anything still in doubt is left alone.
+ *
+ * A copy is only ever reported when it is exactly what the real row would
+ * produce today, so a real row edited since — a category renamed — is never
+ * mistaken for a copy, and nor is the copy of it.
+ *
+ * @param live        { accounts, categories, transactions, budgets } — live rows
+ * @param seedTables  Map of starter id → the table that made it
+ * @returns [{ table, id }] — the copies, never the real rows
+ */
+export function strayCopies(live, seedTables = new Map()) {
+  const byId = new Map();
+  for (const table of Object.keys(NORMALIZERS)) {
+    for (const row of live[table] || []) {
+      if (!row || !row.id) continue;
+      if (!byId.has(row.id)) byId.set(row.id, {});
+      byId.get(row.id)[table] = row;
+    }
+  }
+
+  const asAccount = new Set();
+  const asCategory = new Set();
+  for (const t of live.transactions || []) {
+    if (t.account_id) asAccount.add(t.account_id);
+    if (t.to_account_id) asAccount.add(t.to_account_id);
+    if (t.category_id) asCategory.add(t.category_id);
+  }
+  for (const b of live.budgets || []) if (b.category_id) asCategory.add(b.category_id);
+
+  const out = [];
+  for (const [id, copies] of byId) {
+    const tables = Object.keys(copies);
+    if (tables.length < 2) continue;
+
+    const copied = tables.filter((a) =>
+      tables.some((b) => b !== a && madeFrom(a, copies[a], copies[b]))
+    );
+    const solid = tables.filter((t) => !copied.includes(t));
+    let real = solid.length === 1 ? solid[0] : null;
+    if (!real) {
+      const seed = seedTables.get(id);
+      if (seed && copies[seed]) real = seed;
+      else if (asAccount.has(id) && copies.accounts) real = "accounts";
+      else if (asCategory.has(id) && copies.categories) real = "categories";
+      // Nothing but a real transaction has an account: every other table
+      // read as a transaction comes out with none.
+      else if (copies.transactions && copies.transactions.account_id) real = "transactions";
+    }
+    if (!real) continue;
+
+    for (const t of tables) {
+      if (t !== real && madeFrom(t, copies[t], copies[real])) out.push({ table: t, id });
+    }
+  }
+  return out;
+}
+
+/**
  * Everything that touched one account.
  *
  * Both ends of a transfer count. Money that left this account and money

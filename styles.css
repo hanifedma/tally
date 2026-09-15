@@ -1511,6 +1511,22 @@ dialog.sheet::backdrop {
 
 .sheet-foot .btn { flex: 1; }
 
+/* A footer that measures itself — see stackWhenTight. Its labels stay on one
+   line and may be squeezed, which is how a label too long for its half is
+   noticed; when one is, the primary button takes a row of its own. */
+.sheet-foot.measured .btn {
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sheet-foot.measured.stacked { flex-wrap: wrap; }
+
+.sheet-foot.measured.stacked .btn-primary {
+  flex-basis: 100%;
+  order: 1;
+}
+
 /* ---------- fields ---------- */
 
 .field {

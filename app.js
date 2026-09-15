@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=19";
-import * as S from "./store.js?v=19";
-import * as M from "./money.js?v=19";
+} from "./supabase-config.js?v=20";
+import * as S from "./store.js?v=20";
+import * as M from "./money.js?v=20";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=19";
+} from "./i18n.js?v=20";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -150,6 +150,40 @@ function groupsDigits(input, onInput) {
     if (onInput) onInput(g.text);
   });
   return input;
+}
+
+/**
+ * One row of buttons while every label fits on one line, two rows when one
+ * does not.
+ *
+ * Measured, because nothing here knows the answer in advance: how wide
+ * "Save & another" is depends on the language, the browser's font and the
+ * text size its owner chose. Left to itself the label wrapped inside its
+ * button — a two-line button beside two one-line ones — and on Android the
+ * same squeeze cut it to "Save &", which is not a label.
+ *
+ * Two rows give the last button, the primary one, a row of its own.
+ */
+function stackWhenTight(foot) {
+  foot.classList.add("measured");
+  const check = () => {
+    foot.classList.remove("stacked");
+    const tight = [...foot.querySelectorAll(".btn")].some((b) => b.scrollWidth > b.clientWidth + 1);
+    foot.classList.toggle("stacked", tight);
+  };
+  // Width only. Stacking changes the footer's height, and answering that
+  // change would unstack the footer it had just stacked.
+  let width = -1;
+  new ResizeObserver(([entry]) => {
+    const w = Math.round(entry.contentRect.width);
+    if (w === width) return;
+    width = w;
+    check();
+  }).observe(foot);
+  // A font that arrives late changes every label's width without changing
+  // the footer's.
+  if (document.fonts) document.fonts.ready.then(check);
+  return foot;
 }
 
 /** Append to a grouped field as if it had been typed, separators and all. */
@@ -2456,6 +2490,7 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
     el("button", { class: "btn btn-ghost", type: "button", text: t("tx.saveAnother"), onClick: () => save(true) }),
     el("button", { class: "btn btn-primary", type: "button", text: t("tx.save"), onClick: () => save(false) })
   );
+  stackWhenTight(foot);
 
   // Enter saves, from anywhere in the sheet that is not a button.
   body.addEventListener("keydown", (e) => {

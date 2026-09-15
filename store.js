@@ -31,7 +31,7 @@ import {
   googleClientId,
   hasGoogleClientId,
   isConfigured,
-} from "./supabase-config.js?v=19";
+} from "./supabase-config.js?v=20";
 import {
   normalizeAccount,
   normalizeCategory,
@@ -43,8 +43,10 @@ import {
   SEED_ACCOUNTS,
   startersMayFollow,
   starterRename,
+  rowFitsTable,
+  strayCopies,
   DEFAULT_CURRENCY,
-} from "./money.js?v=19";
+} from "./money.js?v=20";
 
 // Pinned exactly. A CDN that silently moves to a new major version is a
 // deploy you did not make, at a time you did not choose.
@@ -740,6 +742,57 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
     return data;
   }
 
+  /** Is this id a live row of some other table? */
+  function idElsewhere(table, id) {
+    return TABLES.some((other) => {
+      if (other === table) return false;
+      const row = rows[other].get(id);
+      return Boolean(row && !row.deleted_at);
+    });
+  }
+
+  // Which table made each starter id. Worked out once: the ids are derived
+  // from the user id, which does not change while this ledger is open.
+  let seedTables = null;
+
+  /**
+   * Clear out rows that are another table's row copied into this one — see
+   * strayCopies for how a copy is told from the real row.
+   *
+   * Buried rather than forgotten, whether or not the server ever received the
+   * copy: a deletion is the one change every device is sure to hear, and the
+   * tombstone of a row that never reached the server is a deleted row nothing
+   * shows. The real rows are not touched.
+   *
+   * @returns how many copies went
+   */
+  async function removeStrays() {
+    if (!seedTables) {
+      const found = new Map();
+      for (const seed of SEED_CATEGORIES) {
+        found.set(await derivedId(uid, "category:" + seed.slug), "categories");
+      }
+      for (const seed of SEED_ACCOUNTS) {
+        found.set(await derivedId(uid, "account:" + seed.slug), "accounts");
+      }
+      seedTables = found;
+    }
+    const live = {};
+    for (const table of TABLES) live[table] = [...rows[table].values()].filter((r) => !r.deleted_at);
+
+    const strays = strayCopies(live, seedTables);
+    if (!strays.length) return 0;
+    const stamp = new Date().toISOString();
+    for (const { table, id } of strays) {
+      const row = rows[table].get(id);
+      if (!row) continue;
+      applyLocal(table, { ...row, deleted_at: stamp });
+      enqueue(table, rows[table].get(id));
+    }
+    console.warn("Tally: removed " + strays.length + " rows that were another table's rows");
+    return strays.length;
+  }
+
   /**
    * Put back anything this device has that the server has never seen.
    *
@@ -764,6 +817,10 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
     let n = 0;
     for (const row of rows[table].values()) {
       if (row.deleted_at || arrived.has(row.id)) continue;
+      // Not a lost write: ids are random, so a row under an id another table
+      // already uses can only be that table's row read as one of these.
+      // Sending it would make the mistake permanent on every device.
+      if (idElsewhere(table, row.id)) continue;
       enqueue(table, row);
       n++;
     }
@@ -789,6 +846,7 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
     }
 
     let recovered = 0;
+    const arrivedBy = {};
     for (const table of TABLES) {
       // A first fetch of this session is a complete one, so what does not
       // come back is genuinely not there. Later fetches are deltas and say
@@ -803,7 +861,21 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
         if (raw.updated_at && (!newest || raw.updated_at > newest)) newest = raw.updated_at;
       }
       cursors[table] = newest;
-      if (arrived) recovered += requeueMissing(table, arrived);
+      if (arrived) arrivedBy[table] = arrived;
+    }
+
+    // Copies of one table's rows in another — see strayCopies — go before
+    // anything is re-sent, or the next step would send them. On every sync,
+    // not only a complete one: this device keeps its place between sessions,
+    // so most syncs are deltas, and a ledger that already holds copies would
+    // otherwise never be cleaned.
+    const removed = await removeStrays();
+    if (removed) {
+      changed = true;
+      recovered += removed;
+    }
+    for (const table of TABLES) {
+      if (arrivedBy[table]) recovered += requeueMissing(table, arrivedBy[table]);
     }
 
     // Rows that were only ever on this device now have somewhere to go.
@@ -841,7 +913,16 @@ export function openLedger({ uid, onChange, onStatus, onError, local = false, de
             },
             (payload) => {
               if (closed) return;
+              // Only this listener's own table. The channel does not promise
+              // it: until the server has given a listener its id, realtime-js
+              // hands that listener every change on the channel, whatever
+              // table it came from — which is how a new category arrived here
+              // as a "+₩0" transaction, as an account called "Other", and a
+              // transaction as a category with no name. The payload says
+              // whose change it is, and the row's own columns have to agree.
+              if (payload.schema !== "public" || payload.table !== table) return;
               const raw = payload.new && Object.keys(payload.new).length ? payload.new : null;
+              if (raw && !rowFitsTable(table, raw)) return;
               if (raw) {
                 if (acceptServerRow(table, raw)) {
                   if (table !== "settings" && raw.updated_at) {
