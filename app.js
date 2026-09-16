@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=20";
-import * as S from "./store.js?v=20";
-import * as M from "./money.js?v=20";
+} from "./supabase-config.js?v=21";
+import * as S from "./store.js?v=21";
+import * as M from "./money.js?v=21";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=20";
+} from "./i18n.js?v=21";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -426,6 +426,13 @@ function openSheet(build, { onClose, live = false, unsaved = null } = {}) {
 
   document.body.append(dlg);
 
+  /**
+   * The browser is closing this sheet whatever it is told — see "cancel".
+   * Held from that event to the close it announces, so that the close can
+   * put the sheet back instead of throwing its contents away.
+   */
+  let overruled = null;
+
   const close = () => {
     if (dlg.open) dlg.close();
     else cleanup();
@@ -445,34 +452,74 @@ function openSheet(build, { onClose, live = false, unsaved = null } = {}) {
     if (onClose) onClose();
   }
 
+  /** True while the question is on screen, so that it is never up twice. */
+  let asking = false;
+
   /** Close, unless there is unsaved work in here and it is not wanted gone. */
   const askThenClose = async () => {
+    if (asking) return;
     if (unsaved && unsaved()) {
+      asking = true;
       const ok = await confirmSheet({
         title: t("discard.title"),
         body: t("discard.body"),
         confirmLabel: t("discard.confirm"),
         cancelLabel: t("discard.keep"),
         danger: true,
+      }).finally(() => {
+        asking = false;
       });
       if (!ok) return;
     }
     close();
   };
 
-  dlg.addEventListener("close", cleanup);
+  dlg.addEventListener("close", () => {
+    if (!overruled || cleaned) {
+      cleanup();
+      return;
+    }
+    // Put back what the browser took away, where it was, and ask the
+    // question it would not wait for — unless that back press was itself
+    // the answer to it.
+    const { scroll, answered } = overruled;
+    overruled = null;
+    dlg.showModal();
+    const body = inner.querySelector(".sheet-body");
+    if (body && scroll) body.scrollTop = scroll;
+    placeToasts(toastWrap());
+    if (!answered) askThenClose();
+  });
   // A click on the backdrop — the dialog itself rather than the card inside
   // it — closes. Anything mid-edit stays put, because the card is in the way.
   dlg.addEventListener("click", (e) => {
     if (e.target === dlg) askThenClose();
   });
-  // Escape closes a <dialog> on its own, which is right for a sheet you are
-  // reading and wrong for one you are filling in. Refusing the event leaves
-  // the sheet where it is and asks instead.
+  // Escape, and the phone's back button, close a <dialog> on their own,
+  // which is right for a sheet you are reading and wrong for one you are
+  // filling in. Refusing the event leaves the sheet where it is and asks
+  // instead.
+  //
+  // Except that the browser only lets a page refuse once per touch of it: a
+  // second back press with nothing tapped in between arrives as a cancel
+  // that cannot be refused, and the sheet closes regardless. Answering the
+  // question with back and then pressing back again is exactly that — and
+  // it used to take the half-written entry with it, then ask whether to
+  // discard a sheet that was already gone. So that close is noted here, and
+  // undone when it lands.
+  //
+  // Once overruled, the browser also takes the question and the sheet under
+  // it down together in one press. That press was aimed at the question, so
+  // it means "keep editing": the sheet comes back without being asked about
+  // again, or back could never make the question go away.
   dlg.addEventListener("cancel", (e) => {
-    if (unsaved && unsaved()) {
+    if (!(unsaved && unsaved())) return;
+    if (e.cancelable) {
       e.preventDefault();
       askThenClose();
+    } else {
+      const body = inner.querySelector(".sheet-body");
+      overruled = { scroll: body ? body.scrollTop : 0, answered: asking };
     }
   });
 
@@ -2670,7 +2717,7 @@ function openAccount(existing) {
   let sheet = null;
   const rebuild = () => sheet && sheet.rebuild();
 
-  function content(inner, close) {
+  function content(inner, close, askThenClose) {
     {
       const body = el("div", { class: "sheet-body" });
       const nameInput = el("input", {
@@ -2883,11 +2930,16 @@ function openAccount(existing) {
         })
       );
 
-      inner.append(sheetHead(existing ? t("acc.edit") : t("acc.new"), close), body, foot);
+      inner.append(sheetHead(existing ? t("acc.edit") : t("acc.new"), askThenClose), body, foot);
     }
   }
 
-  sheet = openSheet(content);
+  // What was typed, compared with what this opened with, so that closing
+  // asks only when there is something to lose. A name typed and rubbed out
+  // again counts as nothing — the same rule as the transaction sheet.
+  const typed = (d) => JSON.stringify([d.name, d.kind, d.currency, d.opening, d.color, Boolean(d.archived)]);
+  const opened = typed(draft);
+  sheet = openSheet(content, { unsaved: () => typed(draft) !== opened });
 }
 
 function openCategory(existing, kind) {
@@ -2907,7 +2959,7 @@ function openCategory(existing, kind) {
   let sheet = null;
   const rebuild = () => sheet && sheet.rebuild();
 
-  function content(inner, close) {
+  function content(inner, close, askThenClose) {
     {
       const body = el("div", { class: "sheet-body" });
       const nameInput = el("input", {
@@ -3068,11 +3120,13 @@ function openCategory(existing, kind) {
         })
       );
 
-      inner.append(sheetHead(existing ? t("cat.edit") : t("cat.new"), close), body, foot);
+      inner.append(sheetHead(existing ? t("cat.edit") : t("cat.new"), askThenClose), body, foot);
     }
   }
 
-  sheet = openSheet(content);
+  const typed = (d) => JSON.stringify([d.name, d.icon, d.kind, d.color, Boolean(d.archived)]);
+  const opened = typed(draft);
+  sheet = openSheet(content, { unsaved: () => typed(draft) !== opened });
 }
 
 function openManageCategories(startKind) {
@@ -3198,26 +3252,29 @@ function openManageCategories(startKind) {
 // ============================================================
 
 function openBudgets() {
-  openSheet((inner, close) => {
+  // Out here so that closing can ask whether anything in them changed.
+  const inputs = new Map();
+  openSheet((inner, close, askThenClose) => {
     const c = ctx();
     const body = el("div", { class: "sheet-body" });
-    const inputs = new Map();
+    inputs.clear();
 
     const budgetFor = (categoryId) =>
       state.data.budgets.find((b) => (b.category_id || null) === (categoryId || null)) || null;
 
     const amountRow = (label, categoryId, iconText) => {
       const existing = budgetFor(categoryId);
+      const initial = existing ? M.minorToInput(existing.amount_minor, existing.currency) : "";
       const input = el("input", {
         class: "input num",
         type: "text",
         inputmode: "decimal",
         style: { textAlign: "right" },
         placeholder: t("bud.none"),
-        value: existing ? M.minorToInput(existing.amount_minor, existing.currency) : "",
+        value: initial,
       });
       groupsDigits(input);
-      inputs.set(categoryId || "", { input, existing });
+      inputs.set(categoryId || "", { input, existing, initial });
       return el(
         "div",
         { class: "rate-row" },
@@ -3266,15 +3323,20 @@ function openBudgets() {
     };
 
     inner.append(
-      sheetHead(t("bud.title"), close),
+      sheetHead(t("bud.title"), askThenClose),
       body,
       el(
         "div",
         { class: "sheet-foot" },
-        el("button", { class: "btn btn-ghost", type: "button", text: t("cancel"), onClick: close }),
+        el("button", { class: "btn btn-ghost", type: "button", text: t("cancel"), onClick: askThenClose }),
         el("button", { class: "btn btn-primary", type: "button", text: t("save"), onClick: save })
       )
     );
+  }, {
+    // Compared as amounts rather than as text: the field groups its digits
+    // as it is shown, and "1,000" against "1000" is not a change.
+    unsaved: () =>
+      [...inputs.values()].some(({ input, initial }) => M.groupAmount(input.value.trim()) !== M.groupAmount(initial)),
   });
 }
 
@@ -3283,22 +3345,25 @@ function openBudgets() {
 // ============================================================
 
 function openRateEditor(code, onSaved) {
-  openSheet((inner, close) => {
+  // What the field opened with, to tell a change from a look.
+  const was = ctx().rates[code];
+  const startedAs = was ? String(was) : "";
+  let input = null;
+  openSheet((inner, close, askThenClose) => {
     const c = ctx();
-    const current = c.rates[code];
-    const input = el("input", {
+    input = el("input", {
       class: "input num",
       type: "text",
       inputmode: "decimal",
       style: { textAlign: "right" },
-      value: current ? String(current) : "",
+      value: startedAs,
       placeholder: "0.0",
       "data-autofocus": "",
     });
     const errorNode = el("p", { class: "error hidden", hidden: true });
 
     inner.append(
-      sheetHead(t("set.rateFor", { code }) + " " + c.main_currency, close),
+      sheetHead(t("set.rateFor", { code }) + " " + c.main_currency, askThenClose),
       el(
         "div",
         { class: "sheet-body" },
@@ -3309,7 +3374,7 @@ function openRateEditor(code, onSaved) {
       el(
         "div",
         { class: "sheet-foot" },
-        el("button", { class: "btn btn-ghost", type: "button", text: t("cancel"), onClick: close }),
+        el("button", { class: "btn btn-ghost", type: "button", text: t("cancel"), onClick: askThenClose }),
         el("button", {
           class: "btn btn-primary",
           type: "button",
@@ -3329,7 +3394,7 @@ function openRateEditor(code, onSaved) {
         })
       )
     );
-  });
+  }, { unsaved: () => Boolean(input) && input.value.trim() !== startedAs });
 }
 
 function openRates() {
@@ -3342,7 +3407,7 @@ function openRates() {
   const pending = new Set();
   const typed = new Map();
 
-  function content(inner, close) {
+  function content(inner, close, askThenClose) {
     {
       const c = ctx();
       const body = el("div", { class: "sheet-body" });
@@ -3400,12 +3465,12 @@ function openRates() {
       body.append(el("div", { class: "field", style: { marginTop: "16px" } }, addSelect));
 
       inner.append(
-        sheetHead(t("set.rates"), close),
+        sheetHead(t("set.rates"), askThenClose),
         body,
         el(
           "div",
           { class: "sheet-foot" },
-          el("button", { class: "btn btn-ghost", type: "button", text: t("cancel"), onClick: close }),
+          el("button", { class: "btn btn-ghost", type: "button", text: t("cancel"), onClick: askThenClose }),
           el("button", {
             class: "btn btn-primary",
             type: "button",
@@ -3431,7 +3496,15 @@ function openRates() {
     }
   }
 
-  sheet = openSheet(content);
+  // Only what was typed counts. A currency added and left blank saves
+  // nothing, so closing on it loses nothing either.
+  const openedRates = { ...ctx().rates };
+  sheet = openSheet(content, {
+    unsaved: () =>
+      [...typed].some(
+        ([code, text]) => text.trim() !== (openedRates[code] != null ? String(openedRates[code]) : "")
+      ),
+  });
 }
 
 // ============================================================
