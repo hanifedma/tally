@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=21";
-import * as S from "./store.js?v=21";
-import * as M from "./money.js?v=21";
+} from "./supabase-config.js?v=22";
+import * as S from "./store.js?v=22";
+import * as M from "./money.js?v=22";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=21";
+} from "./i18n.js?v=22";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -2343,6 +2343,10 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
     placeholder: t("tx.notePlaceholder"),
   });
   const suggestBox = el("div", { class: "suggest hidden", hidden: true });
+  // Pressing a suggestion would otherwise take focus from the note on
+  // mousedown, and the blur below hides the list before a slow click's
+  // mouseup lands — so the pick never happened.
+  suggestBox.addEventListener("mousedown", (e) => e.preventDefault());
 
   const refreshSuggestions = () => {
     const list = M.noteSuggestions(state.data.transactions, noteInput.value, 6);

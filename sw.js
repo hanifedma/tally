@@ -15,16 +15,16 @@
 //  someone yesterday's balance and call it today's.
 // ============================================================
 
-const VERSION = "tally-v21";
+const VERSION = "tally-v22";
 const SHELL = [
   "./",
   "./index.html",
-  "./app.js?v=21",
-  "./store.js?v=21",
-  "./money.js?v=21",
-  "./i18n.js?v=21",
-  "./supabase-config.js?v=21",
-  "./styles.css?v=21",
+  "./app.js?v=22",
+  "./store.js?v=22",
+  "./money.js?v=22",
+  "./i18n.js?v=22",
+  "./supabase-config.js?v=22",
+  "./styles.css?v=22",
   "./favicon.svg",
   "./icon-192.png",
   "./icon-512.png",
