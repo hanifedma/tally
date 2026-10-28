@@ -13,7 +13,7 @@
 //  currency you have since changed.
 // ============================================================
 
-import * as M from "./money.js?v=22";
+import * as M from "./money.js?v=23";
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -1073,6 +1073,186 @@ test("a starter row is renamed only while it still has the name we gave it", () 
   // A seed whose two languages happen to match ("Other" is not translated
   // in every pair) must never be rewritten to itself.
   eq(M.starterRename("Other", "Other", "Other"), null);
+});
+
+// ------------------------------------------------------------
+//  Import from text
+//
+//  The same inputs, and the same answers, are in the Android app's
+//  ImportTest. An assistant's reply pasted into either app has to become
+//  the same rows.
+// ------------------------------------------------------------
+
+const importCategories = [
+  M.normalizeCategory({ id: "c1", name: "Food", kind: "expense", icon: "🍔" }),
+  M.normalizeCategory({ id: "c2", name: "Transport", kind: "expense", icon: "🚌" }),
+  M.normalizeCategory({ id: "c3", name: "Salary", kind: "income", icon: "💼" }),
+  M.normalizeCategory({ id: "c4", name: "Old", kind: "expense", archived: true }),
+];
+const importEnv = (over = {}) => ({
+  accounts,
+  categories: importCategories,
+  transactions: [],
+  ctx: CTX,
+  today: "2026-10-28",
+  nowMinute: 600,
+  ...over,
+});
+const importOf = (text, over) => M.resolveImport(M.readImportText(text).records, importEnv(over));
+
+test("an assistant's reply is read, fence, chatter and all", () => {
+  const text = [
+    "Here are your transactions:",
+    "```csv",
+    M.IMPORT_HEADER,
+    '2026-10-27,12:30,expense,Food,Cash,,"Lunch, with Budi",12000,,',
+    "2026-10-26,,income,Salary,Gopay,,Gaji,5000000,,",
+    "```",
+    "Let me know if you need anything else!",
+  ].join("\n");
+  const read = M.readImportText(text);
+  eq(read.ignored, 2, "the two sentences are not transactions");
+  const rows = M.resolveImport(read.records, importEnv());
+  eq(rows.length, 2);
+  eq(rows[0].problems, []);
+  eq([rows[0].kind, rows[0].account_id, rows[0].category_id, rows[0].amount_minor], ["expense", "a1", "c1", 12000000]);
+  eq([rows[0].note, rows[0].occurred_on, rows[0].occurred_min], ["Lunch, with Budi", "2026-10-27", 750]);
+  eq([rows[1].kind, rows[1].currency, rows[1].rate, rows[1].occurred_min], ["income", "IDR", 0.0875, 600]);
+});
+
+test("columns are found by their header, in any order", () => {
+  const rows = importOf("Amount\tNote\tDate\tAccount\tCategory\n8000\tBus\t2026-10-01\tCard\ttransport");
+  eq(rows[0].problems, []);
+  eq([rows[0].amount_minor, rows[0].note, rows[0].account_id, rows[0].category_id], [8000000, "Bus", "a3", "c2"]);
+});
+
+test("a markdown table is a table", () => {
+  const rows = importOf("| date | amount | account | category |\n|---|---|---|---|\n| 2026-10-01 | 5,000 | Cash | Food |");
+  eq(rows.length, 1);
+  eq([rows[0].amount_minor, rows[0].problems], [5000000, []]);
+});
+
+test("no header means the asked-for order, or the export's for an exported line", () => {
+  const rows = importOf("2026-10-02,08:15,expense,Food,Cash,,Kimbap,4500\n2026-10-02,09:00,expense,Food,Gopay,,Bakso,IDR,25000,,0.0875,2187.5");
+  eq([rows[0].occurred_min, rows[0].amount_minor, rows[0].note, rows[0].problems], [495, 4500000, "Kimbap", []]);
+  eq([rows[1].account_id, rows[1].amount_minor, rows[1].problems], ["a2", 25000000, []]);
+});
+
+test("amounts are read the way banks write them", () => {
+  const minor = (s, c) => (M.parseLooseAmount(s, c) || {}).minor ?? null;
+  eq(minor("Rp 12.500", "IDR"), 12500000, "a dot before three digits groups rupiah");
+  eq(minor("1.500", "USD"), 1500, "and is a decimal point in dollars");
+  eq(minor("12,500", "USD"), 12500000, "a comma before three digits groups");
+  eq(minor("12,50", "EUR"), 12500, "a comma before two is a decimal comma");
+  eq(minor("1.234.567,89", "EUR"), 1234567890);
+  eq(minor("1,234,567.89", "USD"), 1234567890);
+  eq(minor("1.0005", "USD"), 1001, "half up, on the digits written");
+  eq(minor("12 500", "KRW"), null, "two numbers is not one");
+  eq(minor("abc", "KRW"), null);
+  eq(M.parseLooseAmount("-₩8,000", "KRW").negative, true);
+  eq(M.parseLooseAmount("(4.50)", "USD").negative, true);
+  eq(M.parseLooseAmount("12.000-", "IDR").negative, true);
+  eq(M.parseLooseAmount("+3,000", "KRW").negative, false);
+});
+
+test("dates are year first, and times can be written several ways", () => {
+  eq(M.parseLooseDate("2026/10/28"), { day: "2026-10-28", minute: null });
+  eq(M.parseLooseDate("2026. 10. 28."), { day: "2026-10-28", minute: null });
+  eq(M.parseLooseDate("2026-10-28 14:30"), { day: "2026-10-28", minute: 870 });
+  eq(M.parseLooseDate("2026-10-28T09:05:00Z"), { day: "2026-10-28", minute: 545 });
+  eq(M.parseLooseDate("2026-02-30"), null, "a day that does not exist");
+  eq(M.parseLooseDate("28/10/2026"), null, "day first is refused, not guessed");
+  eq(M.parseLooseTime("2:30 PM"), 870);
+  eq(M.parseLooseTime("12:10 am"), 10);
+  eq(M.parseLooseTime("오후 2:30"), 870);
+  eq(M.parseLooseTime("14.30"), 870);
+  eq(M.parseLooseTime("25:00"), null);
+});
+
+test("names match as a person would mean them, and never by guessing", () => {
+  const rows = importOf([
+    "date,type,category,account,amount",
+    "2026-10-01,expense,🍔 food,CASH,1000",
+    "2026-10-01,expense,Food,Gopay (IDR),1000",
+    "2026-10-01,expense,Coffee,Cash,1000",
+    "2026-10-01,expense,Food,Wallet,1000",
+    "2026-10-01,expense,Old,Cash,1000",
+  ].join("\n"));
+  eq([rows[0].category_id, rows[0].account_id, rows[0].problems], ["c1", "a1", []]);
+  eq(rows[1].account_id, "a2", "a currency after the name is the assistant's, not the name");
+  eq(rows[2].problems, [{ key: "imp.unknownCategory", vars: { v: "Coffee" } }]);
+  eq(rows[3].problems, [{ key: "imp.unknownAccount", vars: { v: "Wallet" } }]);
+  eq(rows[4].category_id, "c4", "an archived category still has its name");
+});
+
+test("a blank type is worked out from the row", () => {
+  const rows = importOf([
+    "date,category,account,to_account,amount",
+    "2026-10-01,Salary,Cash,,500000",
+    "2026-10-01,Food,Cash,,-3000",
+    "2026-10-01,,Cash,Card,20000",
+  ].join("\n"));
+  eq(rows.map((r) => r.kind), ["income", "expense", "transfer"]);
+  eq(rows[1].amount_minor, 3000000, "the minus says which way, not how much");
+});
+
+test("a transfer keeps its fee, and what landed only across currencies", () => {
+  const rows = importOf([
+    M.IMPORT_HEADER,
+    "2026-10-01,,transfer,,Cash,Gopay,Top up,100000,1500,1140000",
+    "2026-10-01,,transfer,,Cash,Card,Pay card,50000,,999",
+    "2026-10-01,,transfer,,Cash,Cash,Nowhere,50000,,",
+  ].join("\n"));
+  eq([rows[0].fee_minor, rows[0].to_amount_minor, rows[0].problems], [1500000, 1140000000, []]);
+  eq(rows[1].to_amount_minor, null, "won to won lands as won");
+  eq(rows[2].problems, [{ key: "tx.sameAccount" }]);
+});
+
+test("what is wrong with a row is said, in the order it would be met", () => {
+  const rows = importOf("date,time,type,category,account,amount\n2026-13-01,7pm,spendy,Food,Cash,lots");
+  eq(rows[0].problems.map((p) => p.key), ["imp.badDate", "imp.badTime", "imp.badType", "imp.badAmount"]);
+  const blank = importOf("date,amount,note\n2026-10-01,,Lunch")[0];
+  eq(blank.problems.map((p) => p.key), ["tx.needAccount", "tx.needAmount", "tx.needCategory"]);
+});
+
+test("a currency the account does not hold is refused, and a missing rate said", () => {
+  const rows = importOf("date,category,account,currency,amount\n2026-10-01,Food,Cash,IDR,1000\n2026-10-01,Food,Gopay,,1000", {
+    ctx: { main_currency: "KRW", rates: {} },
+  });
+  eq(rows[0].problems, [{ key: "imp.currencyMismatch", vars: { v: "IDR", account: "Cash", code: "KRW" } }]);
+  eq(rows[1].problems, [{ key: "tx.needRate", vars: { code: "IDR" } }]);
+});
+
+test("one account is the account when none is named", () => {
+  const rows = importOf("date,category,amount\n2026-10-01,Food,1000", { accounts: [accounts[0]] });
+  eq([rows[0].account_id, rows[0].problems], ["a1", []]);
+});
+
+test("a row already in the ledger is marked, and a deleted one is not", () => {
+  const have = [
+    tx({ id: "x1", amount_minor: 12000000, account_id: "a1", category_id: "c1", occurred_on: "2026-10-27" }),
+    tx({ id: "x2", amount_minor: 9000000, account_id: "a1", occurred_on: "2026-10-27", deleted_at: "2026-10-27T00:00:00Z" }),
+  ];
+  const rows = importOf(
+    "date,category,account,amount\n2026-10-27,Food,Cash,12000\n2026-10-27,Food,Cash,9000\n2026-10-26,Food,Cash,12000",
+    { transactions: have }
+  );
+  eq(rows.map((r) => r.duplicate), [true, false, false]);
+});
+
+test("quoted fields can hold commas, quotes and line breaks", () => {
+  const rows = importOf('date,category,account,note,amount\n2026-10-01,Food,Cash,"Dinner, ""the good one""\nwith Ana",1000');
+  eq(rows.length, 1);
+  eq(rows[0].note, 'Dinner, "the good one"\nwith Ana');
+});
+
+test("the instructions name this ledger's accounts and categories, and only live ones", () => {
+  const p = M.importPrompt({ accounts, categories: importCategories });
+  assert(p.includes(M.IMPORT_HEADER), "the header to write");
+  assert(p.includes("  - Gopay (IDR)"), "each account with its currency");
+  assert(p.includes("  - expense: Food, Transport\n"), "the categories, by side: " + p);
+  assert(p.includes("  - income: Salary\n"));
+  assert(!p.includes("Old"), "not an archived one");
 });
 
 // ------------------------------------------------------------

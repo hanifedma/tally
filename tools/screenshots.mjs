@@ -360,7 +360,7 @@ await sleep(700);
 check(
   "the calculator was evaluated, and the row was written to disk",
   await evalIn(
-    'JSON.parse(localStorage["tally.cache.local"]).rows.transactions.some(t => t.amount_minor === 5000)'
+    'JSON.parse(localStorage["tally.cache.local"]).rows.transactions.some(t => t.amount_minor === 5000000)'
   )
 );
 await c.send("Page.reload");

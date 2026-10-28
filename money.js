@@ -1251,6 +1251,508 @@ export function toCsv(transactions, { accounts, categories, ctx }) {
 }
 
 // ------------------------------------------------------------
+//  Import: many transactions from one piece of text
+//
+//  Tally has no AI in it and never will. What it has is a format an AI can
+//  be taught: the same columns the export writes, so someone can hand their
+//  CSV to whichever assistant they use, show it a screenshot of their bank,
+//  and paste back lines this reads. Everything here is pure and mirrored in
+//  the Android app's Import.kt — the same text has to become the same rows
+//  on both, which ImportTest and the tests below check with the same inputs.
+//
+//  Lenient about shape, strict about meaning. A code fence, a header in a
+//  different order, a markdown table, "Rp 12.500" — all of those are just
+//  how an assistant happens to write, and are read. An account or category
+//  that does not exist is never guessed at: it is said, and the row waits to
+//  be fixed by a person.
+// ------------------------------------------------------------
+
+/** Every column an import reads. */
+export const IMPORT_COLUMNS = [
+  "date", "time", "type", "category", "account", "to_account",
+  "note", "currency", "amount", "fee", "to_amount",
+];
+
+/**
+ * The header an assistant is asked to write, and the order a line with no
+ * header is read in. Currency follows the account, so it is not asked for.
+ */
+export const IMPORT_HEADER = "date,time,type,category,account,to_account,note,amount,fee,to_amount";
+const IMPORT_ORDER = IMPORT_HEADER.split(",");
+
+/** The export's own order, for a line copied out of a Tally CSV without its header. */
+const EXPORT_ORDER = ["date", "time", "type", "category", "account", "to_account", "note", "currency", "amount", "fee"];
+
+const IMPORT_ALIASES = {
+  date: "date", day: "date", 날짜: "date",
+  time: "time", 시간: "time",
+  type: "type", kind: "type", 유형: "type", 구분: "type",
+  category: "category", 카테고리: "category", 분류: "category",
+  account: "account", from: "account", from_account: "account", 자산: "account", 계좌: "account",
+  to_account: "to_account", to: "to_account",
+  note: "note", memo: "note", description: "note", 메모: "note", 내용: "note",
+  currency: "currency", 통화: "currency",
+  amount: "amount", 금액: "amount",
+  fee: "fee", 수수료: "fee",
+  to_amount: "to_amount", received: "to_amount",
+};
+
+const IMPORT_KINDS = {
+  expense: "expense", expenses: "expense", exp: "expense", spend: "expense", spending: "expense",
+  spent: "expense", out: "expense", outflow: "expense", debit: "expense", withdrawal: "expense",
+  payment: "expense", purchase: "expense", 지출: "expense",
+  income: "income", in: "income", inflow: "income", credit: "income", deposit: "income",
+  received: "income", 수입: "income",
+  transfer: "transfer", move: "transfer", 이체: "transfer",
+};
+
+const headerKey = (cell) =>
+  IMPORT_ALIASES[String(cell).trim().toLowerCase().replace(/[\s-]+/g, "_")] || null;
+
+function isImportHeader(cells) {
+  const keys = cells.map(headerKey);
+  return keys.includes("date") && keys.includes("amount");
+}
+
+/**
+ * Text into rows of cells, each remembering the line it started on.
+ *
+ * Quoted fields may hold the delimiter, a doubled quote, or a line break.
+ * The delimiter is whichever of comma, tab and semicolon the first line uses
+ * most — a spreadsheet copied to the clipboard arrives as tabs — and a line
+ * that starts with a pipe makes the whole thing a markdown table.
+ */
+function importCells(text) {
+  const lines = String(text == null ? "" : text)
+    .replace(/^﻿/, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    // The fence an assistant wraps its answer in is not part of the answer.
+    .filter((l) => !/^\s*```/.test(l));
+  const first = lines.find((l) => l.trim()) || "";
+
+  if (first.trim().startsWith("|")) {
+    const out = [];
+    lines.forEach((l, i) => {
+      const s = l.trim();
+      if (!s.startsWith("|")) return;
+      if (/^\|?[\s:|-]+\|?$/.test(s)) return; // the |---|---| under a header
+      const cells = s.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+      out.push({ line: i + 1, raw: s, cells });
+    });
+    return out;
+  }
+
+  const count = (ch) => first.split(ch).length - 1;
+  let delim = ",";
+  for (const d of ["\t", ";"]) if (count(d) > count(delim)) delim = d;
+
+  const src = lines.join("\n");
+  const out = [];
+  let cells = [];
+  let cell = "";
+  let quoted = false;
+  let line = 1;
+  let start = 1;
+  let rowStart = 0;
+  const endRow = (endAt) => {
+    cells.push(cell);
+    out.push({ line: start, raw: src.slice(rowStart, endAt), cells: cells.map((c) => c.trim()) });
+    cells = [];
+    cell = "";
+  };
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') {
+          cell += '"';
+          i++;
+        } else quoted = false;
+      } else {
+        if (ch === "\n") line++;
+        cell += ch;
+      }
+    } else if (ch === '"' && cell.trim() === "") {
+      cell = "";
+      quoted = true;
+    } else if (ch === delim) {
+      cells.push(cell);
+      cell = "";
+    } else if (ch === "\n") {
+      endRow(i);
+      line++;
+      start = line;
+      rowStart = i + 1;
+    } else {
+      cell += ch;
+    }
+  }
+  endRow(src.length);
+  return out;
+}
+
+/**
+ * Text into records: one object per line that looks like a transaction,
+ * keyed by IMPORT_COLUMNS.
+ *
+ * A header is found wherever it is — an assistant that writes a sentence
+ * first has not broken anything — and a second header part way down starts
+ * reading by its columns instead. With no header at all, columns are read in
+ * IMPORT_HEADER order — or the export's, for a line whose eighth cell is a
+ * currency code, which is what a row copied out of a Tally CSV looks like. A line with fewer than two filled cells is prose, not
+ * a transaction, and is left out and counted.
+ *
+ * @returns { records: [{ line, raw, fields }], ignored }
+ */
+export function readImportText(text) {
+  let columns = null;
+  let ignored = 0;
+  const records = [];
+  for (const row of importCells(text)) {
+    const filled = row.cells.filter((c) => c !== "").length;
+    if (!filled) continue;
+    if (isImportHeader(row.cells)) {
+      columns = row.cells.map(headerKey);
+      continue;
+    }
+    if (filled < 2) {
+      ignored++;
+      continue;
+    }
+    const fields = {};
+    for (const k of IMPORT_COLUMNS) fields[k] = "";
+    const order = columns ||
+      (CURRENCIES[String(row.cells[7] || "").toUpperCase()] ? EXPORT_ORDER : IMPORT_ORDER);
+    row.cells.forEach((value, i) => {
+      const key = order[i];
+      if (key && !fields[key]) fields[key] = value;
+    });
+    records.push({ line: row.line, raw: row.raw.trim(), fields });
+  }
+  return { records, ignored };
+}
+
+/**
+ * An amount as a bank or an assistant might write it, in minor units.
+ *
+ * "Rp 12.500", "-₩8,000", "(4.50)", "1 234,56" — symbols and spaces go, a
+ * minus anywhere before the digits (or after them, as some statements put
+ * it) says money went out, and the separators are told apart by where they
+ * sit. One separator followed by exactly three digits is a thousands
+ * separator when it is a comma, or when the currency has no decimals to
+ * write — "1.500" is fifteen hundred won but one and a half dollars.
+ *
+ * Rounded half up on the decimal string itself, not on a float, so that
+ * this and its Kotlin twin can never disagree by a thousandth.
+ *
+ * @returns { minor, negative } or null if there is no number here.
+ */
+export function parseLooseAmount(raw, code) {
+  let s = String(raw == null ? "" : raw).trim();
+  if (!s) return null;
+  let negative = false;
+  if (/^\(.*\)$/.test(s)) {
+    negative = true;
+    s = s.slice(1, -1);
+  }
+  const firstDigit = s.search(/[0-9]/);
+  if (firstDigit < 0) return null;
+  if (/[-−–—]/.test(s.slice(0, firstDigit)) || /[-−–—]\s*$/.test(s)) negative = true;
+  let n = s.replace(/[^0-9.,]/g, "");
+  // What is left must be one number. "12,000 3,000" is two, and guessing
+  // which was meant is the one thing this must not do.
+  if (/[0-9][^0-9.,]+[0-9]/.test(s.replace(/[  ']/g, ""))) return null;
+
+  const dots = n.split(".").length - 1;
+  const commas = n.split(",").length - 1;
+  let decimal = null;
+  if (dots && commas) decimal = n.lastIndexOf(".") > n.lastIndexOf(",") ? "." : ",";
+  else if (dots + commas === 1) {
+    const sep = dots ? "." : ",";
+    const after = n.length - n.indexOf(sep) - 1;
+    const thousands = after === 3 && n.indexOf(sep) > 0 && (sep === "," || currencyOf(code).decimals === 0);
+    decimal = thousands ? null : sep;
+  }
+  // Anything that is not the decimal point is grouping.
+  const group = decimal === "." ? "," : decimal === "," ? "." : null;
+  if (group) n = n.split(group).join("");
+  if (!decimal) n = n.replace(/[.,]/g, "");
+  else if (decimal === ",") n = n.replace(",", ".");
+  if ((n.match(/\./g) || []).length > 1) return null;
+
+  let [whole, frac = ""] = n.split(".");
+  whole = whole.replace(/^0+(?=\d)/, "") || "0";
+  if (!/^\d+$/.test(whole) || !/^\d*$/.test(frac)) return null;
+  const f = (frac + "0000").slice(0, 4);
+  let minor = Number(whole) * MINOR_PER_UNIT + Number(f.slice(0, 3));
+  if (f[3] >= "5") minor += 1;
+  if (!Number.isSafeInteger(minor) || minor > MAX_AMOUNT * MINOR_PER_UNIT) return null;
+  return { minor, negative };
+}
+
+/**
+ * A date as an assistant might write it: 2026-10-28, 2026/10/28, 2026.10.28,
+ * "2026. 10. 28." — year first, always. Day-first dates are refused rather
+ * than guessed: 03/04 is two different days in two different countries.
+ * A time written after the date comes back with it.
+ *
+ * @returns { day, minute } (minute null when none was written), or null.
+ */
+export function parseLooseDate(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  const m = /^(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})\.?(?:[T\s]+(.+))?$/.exec(s);
+  if (!m) return null;
+  const day = keyOf(Number(m[1]), Number(m[2]), Number(m[3]));
+  if (!isDayKey(day) || keyOfDate(dateOf(day)) !== day) return null;
+  let minute = null;
+  if (m[4]) {
+    minute = parseLooseTime(m[4].replace(/(Z|[+-]\d{2}:?\d{2})$/, ""));
+    if (minute === null) return null;
+  }
+  return { day, minute };
+}
+
+/**
+ * "14:30", "2:30 PM", "14.30", "14:30:15", "오후 2:30".
+ * @returns minutes past midnight, or null.
+ */
+export function parseLooseTime(raw) {
+  let s = String(raw == null ? "" : raw).trim().toLowerCase();
+  let half = null;
+  const pre = /^(오전|오후)\s*/.exec(s);
+  if (pre) {
+    half = pre[1] === "오후" ? "pm" : "am";
+    s = s.slice(pre[0].length);
+  }
+  const m = /^(\d{1,2})[:.](\d{2})(?::\d{2}(?:\.\d+)?)?\s*(am|pm|a\.m\.|p\.m\.)?$/.exec(s);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  if (m[3]) half = m[3][0] === "p" ? "pm" : "am";
+  if (half) {
+    if (h < 1 || h > 12) return null;
+    if (half === "pm" && h < 12) h += 12;
+    if (half === "am" && h === 12) h = 0;
+  }
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+/** A name compared as a person would: case, spacing and punctuation aside. */
+const nameKey = (s) => String(s == null ? "" : s).trim().replace(/\s+/g, " ").toLowerCase();
+const looseKey = (s) => nameKey(s).replace(/[^\p{L}\p{N}]/gu, "");
+
+/**
+ * The one row whose name this is, live ones first, or null.
+ * Exact first, then without punctuation or emoji ("🍔 Food" is Food), then
+ * without a currency the assistant added after an account ("BCA (IDR)").
+ */
+function findNamed(rows, text) {
+  const want = nameKey(text);
+  if (!want) return null;
+  const ordered = [...rows.filter((r) => !r.archived), ...rows.filter((r) => r.archived)];
+  const tries = [
+    (r) => nameKey(r.name) === want,
+    (r) => looseKey(r.name) !== "" && looseKey(r.name) === looseKey(text),
+  ];
+  const bare = want.replace(/\s*[(\[·-]?\s*([a-z]{3})\s*[)\]]?$/, (all, code) =>
+    CURRENCIES[code.toUpperCase()] ? "" : all
+  );
+  if (bare && bare !== want) tries.push((r) => nameKey(r.name) === bare);
+  for (const test of tries) {
+    const hit = ordered.find(test);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Records into transactions-to-be, each with whatever is wrong with it.
+ *
+ * Nothing is made up. An account or category that is not in the ledger is
+ * left empty and named in a problem; a blank date is today and a blank time
+ * is now, the same as a blank form. The rate is the one a new entry would
+ * freeze today, as it would be if the row had been typed in.
+ *
+ * A row that matches one already in the ledger — same kind, account, amount
+ * and day — is marked `duplicate`, because pasting last week's screenshot
+ * twice is the easiest mistake this feature makes possible.
+ *
+ * @param env { accounts, categories, transactions, ctx, today, nowMinute }
+ * @returns [{ line, raw, kind, amount_minor, fee_minor, to_amount_minor,
+ *             currency, rate, rate_base, account_id, to_account_id,
+ *             category_id, note, occurred_on, occurred_min, problems,
+ *             duplicate }]
+ *          where problems is [{ key, vars }] in the order they would be met.
+ */
+export function resolveImport(records, env) {
+  const { accounts, categories, ctx } = env;
+  const today = env.today || todayKey();
+  const nowMinute = env.nowMinute == null ? minuteOfDay() : env.nowMinute;
+  const liveAccounts = accounts.filter((a) => !a.archived);
+
+  const seen = new Set();
+  const dupKey = (t) =>
+    [t.kind, t.account_id, t.amount_minor, t.occurred_on, t.kind === "transfer" ? t.to_account_id : ""].join("|");
+  for (const t of env.transactions || []) if (!t.deleted_at) seen.add(dupKey(t));
+
+  return records.map(({ line, raw, fields: f }) => {
+    const problems = [];
+    const problem = (key, vars) => problems.push(vars ? { key, vars } : { key });
+
+    // ---- when ----
+    let day = today;
+    let minute = null;
+    if (f.date) {
+      const d = parseLooseDate(f.date);
+      if (d) {
+        day = d.day;
+        minute = d.minute;
+      } else problem("imp.badDate", { v: f.date });
+    }
+    if (f.time) {
+      const m = parseLooseTime(f.time);
+      if (m === null) problem("imp.badTime", { v: f.time });
+      else minute = m;
+    }
+
+    // ---- which account, and so which currency ----
+    let account = null;
+    if (f.account) {
+      account = findNamed(accounts, f.account);
+      if (!account) problem("imp.unknownAccount", { v: f.account });
+    } else if (liveAccounts.length === 1) {
+      account = liveAccounts[0];
+    } else {
+      problem("tx.needAccount");
+    }
+    const currency = account ? account.currency : ctx.main_currency;
+
+    // ---- how much, and which way ----
+    const amount = parseLooseAmount(f.amount, currency);
+    const typeText = nameKey(f.type);
+    let kind = typeText ? IMPORT_KINDS[typeText] || null : null;
+    if (typeText && !kind) problem("imp.badType", { v: f.type });
+    if (!kind) {
+      if (f.to_account) kind = "transfer";
+      else if (amount && amount.negative) kind = "expense";
+      else if (
+        f.category &&
+        !findNamed(categories.filter((c) => c.kind === "expense"), f.category) &&
+        findNamed(categories.filter((c) => c.kind === "income"), f.category)
+      ) kind = "income";
+      else kind = "expense";
+    }
+    if (!f.amount) problem("tx.needAmount");
+    else if (!amount) problem("imp.badAmount", { v: f.amount });
+    else if (amount.minor <= 0) problem("tx.needAmount");
+
+    // ---- where it went ----
+    let category = null;
+    let toAccount = null;
+    let fee = 0;
+    let toAmount = null;
+    if (kind === "transfer") {
+      if (f.to_account) {
+        toAccount = findNamed(accounts, f.to_account);
+        if (!toAccount) problem("imp.unknownAccount", { v: f.to_account });
+      } else problem("tx.needToAccount");
+      if (account && toAccount && account.id === toAccount.id) problem("tx.sameAccount");
+      if (f.fee) {
+        const p = parseLooseAmount(f.fee, currency);
+        if (p) fee = p.minor;
+        else problem("tx.feeBad");
+      }
+      if (f.to_amount && account && toAccount && account.currency !== toAccount.currency) {
+        const p = parseLooseAmount(f.to_amount, toAccount.currency);
+        if (p) toAmount = p.minor;
+        else problem("imp.badAmount", { v: f.to_amount });
+      }
+    } else if (f.category) {
+      category = findNamed(categories.filter((c) => c.kind === kind), f.category);
+      if (!category) problem("imp.unknownCategory", { v: f.category });
+    } else {
+      problem("tx.needCategory");
+    }
+
+    // An account in won cannot hold a line written in rupiah, and quietly
+    // filing it there would be the hundredfold error this app exists to stop.
+    const stated = String(f.currency || "").trim().toUpperCase();
+    if (account && stated && CURRENCIES[stated] && stated !== account.currency) {
+      problem("imp.currencyMismatch", { v: stated, account: account.name, code: account.currency });
+    }
+    if (account && currency !== ctx.main_currency && rateMissing(currency, ctx.main_currency, ctx.rates)) {
+      problem("tx.needRate", { code: currency });
+    }
+
+    const out = {
+      line,
+      raw,
+      kind,
+      amount_minor: amount ? amount.minor : null,
+      fee_minor: fee,
+      to_amount_minor: toAmount,
+      currency,
+      rate: rateForNew(currency, ctx),
+      rate_base: ctx.main_currency,
+      account_id: account ? account.id : null,
+      to_account_id: toAccount ? toAccount.id : null,
+      category_id: category ? category.id : null,
+      note: String(f.note || "").trim().slice(0, 280),
+      occurred_on: day,
+      occurred_min: minute == null ? nowMinute : minute,
+      problems,
+      duplicate: false,
+    };
+    out.duplicate = out.account_id != null && out.amount_minor != null && seen.has(dupKey(out));
+    return out;
+  });
+}
+
+/**
+ * What to tell an assistant, once, so that what it writes back can be
+ * pasted straight into Tally.
+ *
+ * Built from this ledger rather than written generically: an assistant that
+ * has been handed the exact names of the accounts and categories writes
+ * those names, and a name it invents is the one thing an import cannot fix
+ * by itself. English whatever the app's language — it is read by the model,
+ * and every one of them reads English best — but it asks for notes in the
+ * person's own language.
+ */
+export function importPrompt({ accounts, categories }) {
+  const quote = (name) => (/[",]/.test(name) ? '"' + name.replace(/"/g, '""') + '"' : name);
+  const live = (rows) => rows.filter((r) => !r.archived).sort(byPosition);
+  const accs = live(accounts).map((a) => "  - " + quote(a.name) + " (" + a.currency + ")");
+  const cats = (kind) =>
+    live(categories.filter((c) => c.kind === kind)).map((c) => quote(c.name)).join(", ") || "(none yet)";
+  return [
+    "I record my money in an app called Tally. The attached CSV is everything I have recorded so far. Read it to learn how I name, categorise and describe things.",
+    "",
+    "From now on, whenever I send you a screenshot, statement or message about money I spent, received or moved, turn every transaction in it into CSV that Tally can import. Reply with one code block and nothing else, starting with this header line:",
+    "",
+    IMPORT_HEADER,
+    "",
+    "How to fill it in:",
+    "- date: YYYY-MM-DD. time: HH:MM in 24-hour time, or empty if it isn't shown.",
+    "- type: expense, income or transfer.",
+    "- amount: a positive number with no currency symbol and no thousands separators, with a dot for decimals. Write 12500, not 12,500 or Rp 12.500.",
+    "- account: exactly one of my accounts:",
+    ...(accs.length ? accs : ["  - (none yet)"]),
+    "- category: exactly one of mine, matching the type.",
+    "  - expense: " + cats("expense"),
+    "  - income: " + cats("income"),
+    "  If you aren't sure which category fits, leave it empty and I'll pick it in Tally.",
+    "- transfer means money moved between two of my own accounts. Leave category empty and put the receiving account in to_account. Fill fee only if the bank charged one, and to_amount only when the two accounts use different currencies (it's the amount that arrived).",
+    "- note: short, in the same style and language as the notes in my CSV.",
+    "- Put a value in double quotes if it contains a comma.",
+    "- Leave out anything that isn't a completed transaction, such as pending or declined payments and balance lines.",
+    "- If you can't tell which of my accounts a screenshot is from, ask me before you answer.",
+  ].join("\n");
+}
+
+// ------------------------------------------------------------
 //  Is this transaction storable?
 //
 //  This lives here rather than in the editor because it is the one place

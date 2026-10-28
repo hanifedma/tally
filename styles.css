@@ -2075,3 +2075,317 @@ dialog.sheet::backdrop {
   body { background: #fff; color: #000; }
   .rows, .card { border-color: #ccc; break-inside: avoid; }
 }
+
+/* ============================================================
+   Export to an AI, and adding many from text
+   ============================================================ */
+
+/* The second, smaller button over the +: adding many at once. It sits in
+   the thumb's path but a size down, so the one-at-a-time form is still the
+   obvious thing to press. */
+.fab-mini {
+  position: fixed;
+  right: max(22px, calc(50vw - var(--maxw) / 2 + 22px));
+  bottom: calc(20px + 56px + 12px + env(safe-area-inset-bottom));
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: var(--surface-3);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--shadow-sm);
+  z-index: 25;
+  transition: transform 0.16s var(--ease), background 0.16s var(--ease);
+}
+
+.fab-mini:hover { background: var(--seg-on); transform: translateY(-1px); }
+.fab-mini:active { transform: scale(0.95); }
+.fab-mini svg { width: 20px; height: 20px; }
+
+.main { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
+
+.sheet-section {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  margin: 4px 0 8px;
+}
+
+.sheet-section:not(:first-child) { margin-top: 20px; }
+
+.ai-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ai-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 6px 11px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  min-width: 0;
+  transition: border-color 0.14s var(--ease), background 0.14s var(--ease);
+}
+
+.ai-btn:hover { border-color: var(--border-strong); background: var(--surface-3); }
+.ai-btn:active { transform: scale(0.98); }
+
+.ai-glyph {
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  font-size: 21px;
+  line-height: 1;
+}
+
+.ai-name {
+  font-size: 14px;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--faint);
+  text-align: center;
+}
+
+.ai-sub svg { width: 11px; height: 11px; flex: none; }
+
+.check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 12px;
+  padding: 11px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.check input,
+.import-box {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.check-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.check .help { margin-top: 2px; line-height: 1.4; }
+
+/* ---------- how it works, and what to say ---------- */
+
+.import-how,
+.import-say {
+  padding: 0;
+  overflow: hidden;
+}
+
+.import-how summary,
+.import-say summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 13px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.import-how summary::-webkit-details-marker,
+.import-say summary::-webkit-details-marker { display: none; }
+
+.import-how summary::after,
+.import-say summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--faint);
+  border-bottom: 2px solid var(--faint);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.16s var(--ease);
+  flex: none;
+}
+
+.import-how[open] summary::after,
+.import-say[open] summary::after { transform: rotate(-135deg) translateY(-2px); }
+
+.import-say > :not(summary) { margin-left: 14px; margin-right: 14px; }
+.import-say > :last-child { margin-bottom: 14px; }
+
+.import-steps {
+  margin: 0;
+  padding: 0 14px 14px 36px;
+  display: grid;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.import-steps li::marker { color: var(--accent); font-weight: 650; }
+
+.import-step-btn {
+  display: flex;
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  width: 100%;
+}
+
+.say-head {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 4px 0 2px;
+  color: var(--text);
+}
+
+.say-head:not(:nth-child(2)) { margin-top: 14px; }
+
+.say-toggle { display: inline-block; margin: 6px 0 4px; padding: 2px 0; }
+
+.say-prompt {
+  position: relative;
+  margin-top: 4px;
+}
+
+.say-prompt pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px 44px 10px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+}
+
+.say-prompt .copy-btn { position: absolute; top: 5px; right: 5px; }
+
+.say-example {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 6px 6px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.say-example span { flex: 1; min-width: 0; line-height: 1.4; }
+
+.copy-btn { flex: none; background: var(--elevated); }
+.copy-btn svg { width: 16px; height: 16px; }
+
+/* ---------- the box ---------- */
+
+.import-text {
+  display: block;
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.import-tools {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.import-tools .btn { padding: 8px 14px; font-size: 13.5px; }
+
+.import-status { min-height: 1.4em; }
+
+/* ---------- the rows ---------- */
+
+.import-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.import-rows { padding: 0; overflow: hidden; }
+
+.import-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+.import-row:last-child { border-bottom: 0; }
+.import-row .import-box { margin: 0 0 0 13px; }
+.import-row .tx { border-bottom: 0; padding-left: 10px; min-width: 0; }
+.import-row.off .tx { opacity: 0.5; }
+
+.chip-icon.bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.import-problem,
+.import-dupe {
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 3px;
+  white-space: normal;
+}
+
+.import-problem { color: var(--danger); }
+.import-dupe { color: var(--warn); }
+
+@media (min-width: 900px) {
+  .fab-mini {
+    right: max(26px, calc(50vw - var(--maxw) / 2 - 70px));
+    bottom: calc(28px + 56px + 12px);
+  }
+  .main { padding-bottom: 40px; }
+}
+
+@media (max-width: 360px) {
+  .ai-btn { padding: 12px 4px 10px; }
+  .ai-sub { font-size: 10.5px; }
+}
+
+@media print {
+  .fab-mini { display: none !important; }
+}
+
+.import-top .card-action { white-space: nowrap; flex: none; }

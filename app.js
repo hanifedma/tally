@@ -17,9 +17,9 @@ import {
   hasSupabaseUrl,
   hasSupabaseKey,
   hasGoogleClientId,
-} from "./supabase-config.js?v=22";
-import * as S from "./store.js?v=22";
-import * as M from "./money.js?v=22";
+} from "./supabase-config.js?v=23";
+import * as S from "./store.js?v=23";
+import * as M from "./money.js?v=23";
 import {
   t,
   setLang,
@@ -31,7 +31,7 @@ import {
   formatTime,
   formatPercent,
   weekdayShort,
-} from "./i18n.js?v=22";
+} from "./i18n.js?v=23";
 
 // ------------------------------------------------------------
 //  Tiny DOM helpers
@@ -102,6 +102,10 @@ const ICONS = {
   empty: '<rect x="3" y="5" width="18" height="15" rx="3"/><path d="M3 10h18M8 15h4"/>',
   edit: '<path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z"/>',
   archive: '<rect x="3" y="4" width="18" height="4" rx="1.5"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/>',
+  paste: '<rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4.5V3h6v1.5M9 10h6M9 13.5h6M9 17h3.5"/>',
+  share: '<path d="M12 15V4m0 0-4 4m4-4 4 4M6 12v6.5A1.5 1.5 0 0 0 7.5 20h9a1.5 1.5 0 0 0 1.5-1.5V12"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+  external: '<path d="M14 4h6v6M20 4l-9 9M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"/>',
 };
 
 function icon(name, cls) {
@@ -930,6 +934,7 @@ function wireChrome() {
   $("btnLang").onclick = () => setSetting({ lang: getLang() === "ko" ? "en" : "ko" });
   $("btnMenu").onclick = openSettings;
   $("fab").onclick = () => openTransaction(null);
+  $("fabText").onclick = openImport;
 
   $("btnPrev").onclick = () => {
     state.anchor = M.shiftPeriod(period(), -1, state.data.settings.month_start).start;
@@ -1056,6 +1061,9 @@ function renderChrome() {
   $("btnSearch").title = t("search.open");
   $("btnMenu").title = t("menu.open");
   $("fab").title = t("add.new");
+  $("fab").setAttribute("aria-label", t("add.new"));
+  $("fabText").title = t("imp.open");
+  $("fabText").setAttribute("aria-label", t("imp.open"));
   $("btnPrev").title = t("nav.prevPeriod");
   $("btnNext").title = t("nav.nextPeriod");
 
@@ -1287,6 +1295,14 @@ function renderLog() {
                 { class: "btn btn-primary", type: "button", onClick: () => openTransaction(null) },
                 icon("plus"),
                 t("log.empty.cta")
+              ),
+          anyAtAll
+            ? null
+            : el(
+                "button",
+                { class: "btn btn-ghost", type: "button", style: { marginLeft: "8px" }, onClick: openImport },
+                icon("paste"),
+                t("set.import")
               )
         )
       );
@@ -1895,7 +1911,14 @@ const accountGlyph = (kind) => ACCOUNT_GLYPH[kind] || "💰";
 //  The transaction editor
 // ============================================================
 
-function openTransaction(existing) {
+/**
+ * @param review  set when this is one row of an import being checked:
+ *   `{ draft, title, last, single, onClosed(outcome) }`. The editor opens on
+ *   that draft, says which row it is, and offers Skip beside Save. What
+ *   happened is reported when the sheet goes — "saved", "skipped", or
+ *   nothing at all for a ✕, which stops the walk through the rest.
+ */
+function openTransaction(existing, review = null) {
   const c = ctx();
   const accounts = accountsList();
   if (!accounts.length) {
@@ -1904,7 +1927,9 @@ function openTransaction(existing) {
     return;
   }
 
-  const draft = existing
+  const draft = review
+    ? { ...review.draft }
+    : existing
     ? {
         ...existing,
         amount: M.groupAmount(M.minorToInput(existing.amount_minor, existing.currency)),
@@ -1932,7 +1957,7 @@ function openTransaction(existing) {
         deleted_at: null,
       };
 
-  if (!existing) {
+  if (!existing && !review) {
     // Open on the account and category used last, because the next thing
     // anyone records is overwhelmingly another of the same thing.
     const last = state.data.transactions
@@ -1961,7 +1986,10 @@ function openTransaction(existing) {
   // `feeTouched` is here rather than on the draft because it is a fact about
   // this editing session, not about the transaction: once the fee has been
   // typed in, no later change of account may overwrite it.
-  const view = { errorKey: null, first: true, feeTouched: false };
+  const view = { errorKey: null, first: true, feeTouched: false, review, outcome: null };
+  // A row being checked shows what is wrong with it straight away, rather
+  // than waiting for Save to be pressed to say so.
+  if (review) view.errorKey = M.validateTransaction(draft, c);
   let sheet = null;
   const rerender = () => sheet && sheet.rebuild();
 
@@ -1986,7 +2014,10 @@ function openTransaction(existing) {
       );
       view.first = false;
     },
-    { unsaved: () => typed(draft) !== view.opened }
+    {
+      unsaved: () => typed(draft) !== view.opened,
+      onClose: review ? () => review.onClosed(view.outcome) : null,
+    }
   );
 }
 
@@ -2480,6 +2511,14 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
     }
     setError(null);
     commit(draft);
+    if (view.review) {
+      view.outcome = "saved";
+      // Nothing left unsaved: the next row opens without a question about
+      // this one.
+      if (view.filed) view.filed();
+      closeIt();
+      return;
+    }
     if (andAnother) {
       toast(t("tx.saved"));
       // Keep the shape of what was just entered — kind, account, category,
@@ -2537,10 +2576,35 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
       )
     );
   }
-  foot.append(
-    el("button", { class: "btn btn-ghost", type: "button", text: t("tx.saveAnother"), onClick: () => save(true) }),
-    el("button", { class: "btn btn-primary", type: "button", text: t("tx.save"), onClick: () => save(false) })
-  );
+  const review = view.review;
+  if (review && review.single) {
+    foot.append(
+      el("button", { class: "btn btn-primary", type: "button", text: t("tx.save"), onClick: () => save(false) })
+    );
+  } else if (review) {
+    foot.append(
+      el("button", {
+        class: "btn btn-ghost",
+        type: "button",
+        text: t("imp.skip"),
+        onClick: () => {
+          view.outcome = "skipped";
+          closeIt();
+        },
+      }),
+      el("button", {
+        class: "btn btn-primary",
+        type: "button",
+        text: review.last ? t("tx.save") : t("imp.saveNext"),
+        onClick: () => save(false),
+      })
+    );
+  } else {
+    foot.append(
+      el("button", { class: "btn btn-ghost", type: "button", text: t("tx.saveAnother"), onClick: () => save(true) }),
+      el("button", { class: "btn btn-primary", type: "button", text: t("tx.save"), onClick: () => save(false) })
+    );
+  }
   stackWhenTight(foot);
 
   // Enter saves, from anywhere in the sheet that is not a button.
@@ -2551,7 +2615,8 @@ function transactionSheetContent(draft, existing, closeIt, view, rerender, askTh
     }
   });
 
-  return [sheetHead(existing ? t("tx.edit") : t("tx.new"), askThenClose || closeIt), body, foot];
+  const title = review ? review.title : existing ? t("tx.edit") : t("tx.new");
+  return [sheetHead(title, askThenClose || closeIt), body, foot];
 }
 
 function commit(draft) {
@@ -3732,22 +3797,11 @@ function openSettings() {
           close();
           openBudgets();
         }),
-        el(
-          "button",
-          {
-            class: "picker",
-            type: "button",
-            style: { marginBottom: "8px" },
-            onClick: exportCsv,
-          },
-          icon("download"),
-          el(
-            "span",
-            { class: "picker-value stacked" },
-            t("set.export"),
-            el("span", { class: "help", style: { margin: 0 }, text: t("set.exportHelp") })
-          )
-        ),
+        rowLink(t("set.import"), t("set.importHelp"), "paste", () => {
+          close();
+          openImport();
+        }),
+        rowLink(t("set.export"), t("set.exportHelp"), "download", openExport),
         resetRow(close),
       ]);
 
@@ -3831,25 +3885,720 @@ function appVersion() {
   return document.querySelector('meta[name="app-version"]')?.content || "1";
 }
 
-function exportCsv() {
-  const csv = M.toCsv(state.data.transactions, {
+// ============================================================
+//  Export, and handing it to an AI
+// ============================================================
+
+const csvName = () => "tally-" + M.todayKey() + ".csv";
+
+function ledgerCsv() {
+  return M.toCsv(state.data.transactions, {
     accounts: state.data.accounts,
     categories: state.data.categories,
     ctx: ctx(),
   });
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+}
+
+function aiInstructions() {
+  return M.importPrompt({ accounts: state.data.accounts, categories: state.data.categories });
+}
+
+function downloadCsv() {
+  const blob = new Blob([ledgerCsv()], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  const a = el("a", {
-    href: url,
-    download: "tally-" + M.todayKey() + ".csv",
-    style: { display: "none" },
-  });
-  document.body.append(a);
+  const a = el("a", { href: url, download: csvName(), style: { display: "none" } });
+  // Inside the open sheet, not at body level: a modal dialog makes the rest
+  // of the page inert, and some engines will not follow a click there.
+  (document.querySelector("dialog[open]:last-of-type") || document.body).append(a);
   a.click();
   setTimeout(() => {
     a.remove();
     URL.revokeObjectURL(url);
   }, 1000);
+}
+
+/**
+ * Put text on the clipboard. Started inside the click that asked for it,
+ * because a browser only allows this while the page has the user's
+ * attention — and opening another tab is about to take it away.
+ *
+ * Falls back to a hidden textarea where the async API is missing or
+ * refuses, parked inside the open sheet for the same inertness reason as
+ * the download link.
+ */
+function copyText(text) {
+  const legacy = () => {
+    const host = document.querySelector("dialog[open]:last-of-type") || document.body;
+    const area = el("textarea", {
+      style: { position: "fixed", top: "0", left: "0", opacity: "0", pointerEvents: "none" },
+    });
+    area.value = text;
+    host.append(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    return ok;
+  };
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    return navigator.clipboard.writeText(text).then(() => true, () => legacy());
+  }
+  return Promise.resolve(legacy());
+}
+
+/**
+ * The three assistants offered first. Glyphs rather than logos: these are
+ * pointers to somewhere else, and a borrowed trademark in a money app reads
+ * as an endorsement nobody gave.
+ */
+const AI_APPS = [
+  { name: "Claude", url: "https://claude.ai/new", glyph: "✱", color: "#d97757" },
+  { name: "ChatGPT", url: "https://chatgpt.com/", glyph: "◎", color: "#10a37f" },
+  { name: "Gemini", url: "https://gemini.google.com/app", glyph: "✦", color: "#4285f4" },
+];
+
+const PROMPT_PREF = "tally.sharePrompt";
+
+function readPromptPref() {
+  try {
+    return localStorage.getItem(PROMPT_PREF) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function canShareFiles() {
+  try {
+    if (typeof navigator.share !== "function" || typeof navigator.canShare !== "function") return false;
+    const probe = new File(["x"], "x.csv", { type: "text/csv" });
+    return navigator.canShare({ files: [probe] });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Export as CSV: to an AI first, because that is what it is mostly for now,
+ * and then the plain ways out — the system's share sheet and a download.
+ *
+ * A web page cannot put a file into another site's chat box. So "Claude"
+ * here does the three things that can be done in one click — downloads the
+ * CSV, copies the instructions, opens the site — and then says, in one
+ * line, the two things left for the person to do there.
+ */
+function openExport() {
+  let withPrompt = readPromptPref();
+  const sharable = canShareFiles();
+
+  openSheet((inner, close) => {
+    const sectionTitle = (text) => el("h3", { class: "sheet-section", text });
+
+    const grid = el("div", { class: "ai-grid" });
+    for (const app of AI_APPS) {
+      grid.append(
+        el(
+          "button",
+          {
+            class: "ai-btn",
+            type: "button",
+            onClick: () => {
+              if (withPrompt) copyText(aiInstructions());
+              downloadCsv();
+              window.open(app.url, "_blank", "noopener");
+              toast(t(withPrompt ? "share.webDone" : "share.webDoneBare", { app: app.name }), { ms: 9000 });
+            },
+          },
+          el("span", { class: "ai-glyph", style: { color: app.color, background: "color-mix(in srgb, " + app.color + " 18%, transparent)" }, text: app.glyph }),
+          el("span", { class: "ai-name", text: app.name }),
+          el("span", { class: "ai-sub" }, t("share.web"), icon("external"))
+        )
+      );
+    }
+
+    const box = el("input", { type: "checkbox", checked: withPrompt });
+    box.addEventListener("change", () => {
+      withPrompt = box.checked;
+      try {
+        localStorage.setItem(PROMPT_PREF, withPrompt ? "1" : "0");
+      } catch {
+        /* remembered for this sheet only */
+      }
+    });
+
+    const action = (iconName, label, onClick) =>
+      el(
+        "button",
+        { class: "picker", type: "button", style: { marginBottom: "8px" }, onClick },
+        icon(iconName),
+        el("span", { class: "picker-value", text: label })
+      );
+
+    const body = el(
+      "div",
+      { class: "sheet-body" },
+      sectionTitle(t("share.ai")),
+      el("p", { class: "help", style: { margin: "0 0 12px" }, text: t("share.aiHelp") }),
+      grid,
+      el(
+        "label",
+        { class: "check" },
+        box,
+        el(
+          "span",
+          null,
+          el("span", { class: "check-label", text: t("share.withPrompt") }),
+          el("span", { class: "help", text: t("share.withPromptHelp") })
+        )
+      ),
+      sectionTitle(t("share.or")),
+      sharable
+        ? action("share", t("share.other"), async () => {
+            const file = new File([ledgerCsv()], csvName(), { type: "text/csv" });
+            const data = { files: [file], title: csvName() };
+            if (withPrompt) {
+              const text = aiInstructions();
+              data.text = text;
+              // Plenty of share targets keep the file and drop the text.
+              copyText(text);
+            }
+            try {
+              await navigator.share(data);
+            } catch (e) {
+              if (e && e.name !== "AbortError") toast(t("err.generic"), { danger: true });
+            }
+          })
+        : null,
+      action("download", t("share.download"), downloadCsv),
+      action("copy", t("share.copyPrompt"), async () => {
+        const ok = await copyText(aiInstructions());
+        toast(ok ? t("share.copied") : t("share.copyFailed"), { danger: !ok });
+      })
+    );
+
+    inner.append(sheetHead(t("set.export"), close), body);
+  });
+}
+
+// ============================================================
+//  Add from text
+// ============================================================
+
+/** An import row as the editor's working copy. */
+function draftFromImport(item) {
+  return {
+    id: M.uuid(),
+    kind: item.kind,
+    amount: item.amount_minor ? M.groupAmount(M.minorToInput(item.amount_minor, item.currency)) : "",
+    fee: item.fee_minor ? M.groupAmount(M.minorToInput(item.fee_minor, item.currency)) : "",
+    currency: item.currency,
+    rate: item.rate,
+    rate_base: item.rate_base,
+    account_id: item.account_id,
+    to_account_id: item.kind === "transfer" ? item.to_account_id : null,
+    to_amount_minor: item.kind === "transfer" ? item.to_amount_minor : null,
+    category_id: item.kind === "transfer" ? null : item.category_id,
+    note: item.note,
+    occurred_on: item.occurred_on,
+    occurred_min: item.occurred_min,
+    deleted_at: null,
+  };
+}
+
+/** An import row that has nothing wrong with it, as the row to store. */
+function rowFromImport(item, createdAt) {
+  const transfer = item.kind === "transfer";
+  return {
+    id: M.uuid(),
+    kind: item.kind,
+    amount_minor: item.amount_minor,
+    currency: item.currency,
+    rate: item.rate,
+    rate_base: item.rate_base,
+    account_id: item.account_id,
+    to_account_id: transfer ? item.to_account_id : null,
+    to_amount_minor: transfer ? item.to_amount_minor : null,
+    fee_minor: transfer ? item.fee_minor : 0,
+    category_id: transfer ? null : item.category_id,
+    note: item.note,
+    occurred_on: item.occurred_on,
+    occurred_min: item.occurred_min,
+    created_at: createdAt,
+    deleted_at: null,
+  };
+}
+
+/** An example of what to paste, written in this ledger's own names. */
+function importExample() {
+  const acc = accountsList()[0];
+  const cat = categoriesOf("expense")[0];
+  const quote = (s) => (/[",]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s);
+  return (
+    M.IMPORT_HEADER + "\n" +
+    M.todayKey() + ",12:30,expense," + quote(cat ? cat.name : "Food") + "," +
+    quote(acc ? acc.name : "Cash") + ",,Lunch,12000,,"
+  );
+}
+
+/** Remembered per device: someone who has read how it works once can fold it away. */
+const HOW_PREF = "tally.importHowSeen";
+
+/**
+ * Paste what an assistant wrote, check it, add it.
+ *
+ * Two steps in one sheet. The first is the text: how it works, what to say
+ * to the AI, and the box to paste into. The second is the rows that text
+ * became, each with a box to leave it out, what is wrong with it if
+ * anything is, and a mark on any that look like one already in the ledger.
+ * From there everything that is ready goes in at once, or each is opened in
+ * the ordinary editor in turn — Save & next, or Skip.
+ *
+ * Rows that have gone in leave the list, so whatever is still on screen is
+ * always exactly what has not been added yet.
+ */
+function openImport() {
+  if (!accountsList().length) {
+    toast(t("tx.noAccounts"));
+    openAccount(null);
+    return;
+  }
+  let howOpen = true;
+  try {
+    howOpen = localStorage.getItem(HOW_PREF) !== "1";
+  } catch {
+    /* shown, then */
+  }
+  const st = { text: "", items: null, ignored: 0, howOpen, sayOpen: false, promptOpen: false };
+  let sheet = null;
+  const rebuild = () => sheet && sheet.rebuild();
+
+  const parse = () => {
+    const read = M.readImportText(st.text);
+    const items = M.resolveImport(read.records, {
+      accounts: state.data.accounts,
+      categories: state.data.categories,
+      transactions: state.data.transactions,
+      ctx: ctx(),
+    });
+    for (const it of items) it.include = !it.duplicate;
+    return { items, ignored: read.ignored };
+  };
+
+  const ready = () => (st.items || []).filter((it) => it.include && !it.problems.length);
+
+  /** Done with some rows: off the list, and the sheet closes once it is empty. */
+  const settle = (message) => {
+    st.items = st.items.filter((it) => !it.done);
+    if (!st.items.length) {
+      st.text = "";
+      sheet.close();
+    } else rebuild();
+    if (message) toast(message);
+  };
+
+  const followTo = (days) => {
+    const p = period();
+    if (!days.length || days.some((d) => M.inRange(d, p.start, p.end))) return;
+    state.anchor = days.reduce((a, b) => (a > b ? a : b));
+    renderAll();
+  };
+
+  const addReady = () => {
+    const list = ready();
+    if (!list.length) return;
+    const now = Date.now();
+    // A millisecond apart, newest first, so rows that share a minute keep
+    // the order they were pasted in — which is how a bank lists them.
+    const rows = list.map((it, i) => rowFromImport(it, new Date(now - i).toISOString()));
+    state.ledger.putMany(rows.map((row) => ({ table: "transactions", row })));
+    for (const it of list) it.done = true;
+    followTo(rows.map((r) => r.occurred_on));
+    settle(null);
+    toast(t("imp.added", { n: rows.length }), {
+      action: t("tx.undo"),
+      ms: 8000,
+      onAction: () => {
+        const gone = new Date().toISOString();
+        state.ledger.putMany(rows.map((row) => ({ table: "transactions", row: { ...row, deleted_at: gone } })));
+      },
+    });
+  };
+
+  /** Each included row in the editor in turn. A ✕ stops the walk. */
+  const reviewAll = () => {
+    const queue = st.items.filter((it) => it.include);
+    if (!queue.length) return;
+    let added = 0;
+    let skipped = 0;
+    const finish = () => settle(t("imp.reviewDone", { added, skipped }));
+    const step = (i) => {
+      const it = queue[i];
+      openTransaction(null, {
+        draft: draftFromImport(it),
+        title: t("imp.reviewStep", { i: i + 1, n: queue.length }),
+        last: i === queue.length - 1,
+        onClosed: (outcome) => {
+          if (outcome === "saved") {
+            it.done = true;
+            added++;
+          } else if (outcome === "skipped") {
+            skipped++;
+          } else {
+            finish();
+            return;
+          }
+          if (i + 1 < queue.length) step(i + 1);
+          else finish();
+        },
+      });
+    };
+    step(0);
+  };
+
+  const reviewOne = (it) => {
+    openTransaction(null, {
+      draft: draftFromImport(it),
+      title: t("tx.new"),
+      single: true,
+      onClosed: (outcome) => {
+        if (outcome !== "saved") return;
+        it.done = true;
+        settle(t("tx.saved"));
+      },
+    });
+  };
+
+  // ---- step one: the text ----
+  function pasteStep(inner, close, askThenClose) {
+    const body = el("div", { class: "sheet-body" });
+
+    // How it works.
+    const how = el(
+      "details",
+      { class: "card import-how", open: st.howOpen },
+      el("summary", { text: t("imp.how") }),
+      el(
+        "ol",
+        { class: "import-steps" },
+        el(
+          "li",
+          null,
+          el("span", { text: t("imp.step1") }),
+          el(
+            "button",
+            { class: "btn btn-ghost import-step-btn", type: "button", onClick: openExport },
+            icon("share"),
+            t("imp.step1Action")
+          )
+        ),
+        el("li", { text: t("imp.step2") }),
+        el("li", { text: t("imp.step3") })
+      )
+    );
+    how.addEventListener("toggle", () => {
+      st.howOpen = how.open;
+      try {
+        localStorage.setItem(HOW_PREF, how.open ? "0" : "1");
+      } catch {
+        /* folds again next time */
+      }
+    });
+
+    // What to say.
+    const copyBtn = (text) =>
+      el(
+        "button",
+        {
+          class: "icon-btn copy-btn",
+          type: "button",
+          title: t("imp.copy"),
+          "aria-label": t("imp.copy"),
+          onClick: async () => {
+            const ok = await copyText(text);
+            toast(ok ? t("share.copied") : t("share.copyFailed"), { danger: !ok });
+          },
+        },
+        icon("copy")
+      );
+    const accs = accountsList();
+    const examples = [
+      t("imp.example1", { account: accs[0] ? accs[0].name : "BCA" }),
+      t("imp.example2"),
+    ];
+    if (accs.length > 1) examples.push(t("imp.example3", { account: accs[0].name, other: accs[1].name }));
+    const prompt = aiInstructions();
+    const promptBox = el(
+      "div",
+      { class: "say-prompt" + (st.promptOpen ? "" : " hidden"), hidden: !st.promptOpen },
+      el("pre", { text: prompt }),
+      copyBtn(prompt)
+    );
+    const say = el(
+      "details",
+      { class: "card import-say", open: st.sayOpen },
+      el("summary", { text: t("imp.say") }),
+      el("p", { class: "say-head", text: t("imp.sayFirst") }),
+      el("p", { class: "help", style: { marginTop: 0 }, text: t("imp.sayFirstHelp") }),
+      el("button", {
+        class: "card-action say-toggle",
+        type: "button",
+        text: st.promptOpen ? t("imp.hidePrompt") : t("imp.showPrompt"),
+        onClick: () => {
+          st.promptOpen = !st.promptOpen;
+          rebuild();
+        },
+      }),
+      promptBox,
+      el("p", { class: "say-head", text: t("imp.sayLater") }),
+      examples.map((text) => el("div", { class: "say-example" }, el("span", { text: "“" + text + "”" }), copyBtn(text))),
+      el("p", { class: "help", text: t("imp.sayTip") })
+    );
+    say.addEventListener("toggle", () => {
+      st.sayOpen = say.open;
+    });
+
+    // The box.
+    const area = el("textarea", {
+      class: "input import-text",
+      rows: "7",
+      spellcheck: "false",
+      autocomplete: "off",
+      placeholder: importExample(),
+      "aria-label": t("imp.pasteLabel"),
+    });
+    area.value = st.text;
+    const status = el("p", { class: "help import-status" });
+    const checkBtn = el("button", { class: "btn btn-primary", type: "button", text: t("imp.check") });
+
+    const refresh = () => {
+      const trimmed = st.text.trim();
+      if (!trimmed) {
+        status.textContent = "";
+        status.className = "help import-status";
+        checkBtn.disabled = true;
+        return;
+      }
+      const { items, ignored } = parse();
+      checkBtn.disabled = !items.length;
+      status.className = "help import-status" + (items.length ? "" : " warn");
+      status.textContent = items.length
+        ? [t("imp.found", { n: items.length }), ignored ? t("imp.ignored", { n: ignored }) : null]
+            .filter(Boolean)
+            .join(" · ")
+        : t("imp.nothing");
+    };
+    area.addEventListener("input", () => {
+      st.text = area.value;
+      refresh();
+    });
+
+    const tools = el("div", { class: "import-tools" });
+    if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+      tools.append(
+        el(
+          "button",
+          {
+            class: "btn",
+            type: "button",
+            onClick: async () => {
+              try {
+                const text = await navigator.clipboard.readText();
+                if (!text) return;
+                st.text = st.text.trim() ? st.text.replace(/\s*$/, "\n") + text : text;
+                area.value = st.text;
+                refresh();
+              } catch {
+                // Refused, or a browser that asks and was told no. The box is
+                // still there for a long-press or Ctrl+V.
+                area.focus();
+              }
+            },
+          },
+          icon("paste"),
+          t("imp.paste")
+        )
+      );
+    }
+    tools.append(
+      el("button", {
+        class: "btn btn-ghost",
+        type: "button",
+        text: t("imp.clear"),
+        onClick: () => {
+          st.text = "";
+          area.value = "";
+          refresh();
+          area.focus();
+        },
+      })
+    );
+
+    body.append(
+      how,
+      say,
+      el(
+        "div",
+        { class: "field", style: { marginBottom: 0 } },
+        el("span", { class: "field-label", text: t("imp.pasteLabel") }),
+        area,
+        tools,
+        status
+      )
+    );
+
+    checkBtn.addEventListener("click", () => {
+      const { items, ignored } = parse();
+      if (!items.length) return;
+      st.items = items;
+      st.ignored = ignored;
+      rebuild();
+    });
+    const foot = el("div", { class: "sheet-foot" }, checkBtn);
+    refresh();
+
+    inner.append(sheetHead(t("imp.title"), askThenClose || close), body, foot);
+  }
+
+  // ---- step two: the rows ----
+  function rowsStep(inner, close, askThenClose) {
+    const body = el("div", { class: "sheet-body" });
+    const items = st.items;
+    const c = ctx();
+
+    const list = el("div", { class: "card rows import-rows" });
+    for (const it of items) {
+      const cat = catById(it.category_id);
+      const from = accById(it.account_id);
+      const to = accById(it.to_account_id);
+      const transfer = it.kind === "transfer";
+      const bad = it.problems.length > 0;
+
+      const title = it.note || (transfer ? t("tx.transfer") : cat ? cat.name : it.raw);
+      const sub = [formatDayShort(it.occurred_on) + " " + formatTime(it.occurred_min)];
+      if (transfer) {
+        sub.push(t("log.transferTo", {
+          from: from ? from.name : t("log.noAccount"),
+          to: to ? to.name : t("log.noAccount"),
+        }));
+      } else {
+        if (it.note && cat) sub.push(cat.name);
+        sub.push(from ? from.name : t("log.noAccount"));
+      }
+
+      const box = el("input", {
+        type: "checkbox",
+        class: "import-box",
+        checked: it.include,
+        "aria-label": t("imp.include"),
+      });
+      box.addEventListener("change", () => {
+        it.include = box.checked;
+        rebuild();
+      });
+
+      const sign = transfer ? "" : it.kind === "income" ? "+" : "−";
+      const amount = it.amount_minor
+        ? sign + fmt(it.amount_minor, it.currency, { sign: "never" })
+        : "—";
+
+      list.append(
+        el(
+          "div",
+          { class: "import-row" + (it.include ? "" : " off") },
+          box,
+          el(
+            "button",
+            { class: "tx", type: "button", onClick: () => reviewOne(it) },
+            el("span", {
+              class: "chip-icon" + (bad ? " bad" : ""),
+              style: !bad && cat ? { background: colorSoft(cat.color) } : null,
+              text: bad ? "!" : transfer ? "⇄" : cat ? cat.icon : "•",
+            }),
+            el(
+              "span",
+              { class: "tx-body" },
+              el("span", { class: "tx-title", text: title }),
+              el("span", { class: "tx-sub", text: sub.join(" · ") }),
+              bad
+                ? el("span", {
+                    class: "import-problem",
+                    text: it.problems.map((p) => t(p.key, { code: c.main_currency, ...(p.vars || {}) })).join(" · "),
+                  })
+                : null,
+              it.duplicate ? el("span", { class: "import-dupe", text: t("imp.dupe") }) : null
+            ),
+            el(
+              "span",
+              { class: "tx-amount " + (transfer ? "move" : it.kind === "income" ? "in" : "out"), text: amount }
+            )
+          )
+        )
+      );
+    }
+
+    const n = ready().length;
+    const needFix = items.some((it) => it.include && it.problems.length);
+    // add(), not body.append(): the note below is null when nothing needs a
+    // fix, and native append would write the word "null" under the list.
+    add(body, [
+      el(
+        "div",
+        { class: "import-top" },
+        el("span", {
+          class: "help",
+          style: { margin: 0 },
+          text: [t("imp.found", { n: items.length }), st.ignored ? t("imp.ignored", { n: st.ignored }) : null]
+            .filter(Boolean)
+            .join(" · "),
+        }),
+        el("button", {
+          class: "card-action",
+          type: "button",
+          text: t("imp.back"),
+          onClick: () => {
+            st.items = null;
+            rebuild();
+          },
+        })
+      ),
+      list,
+      needFix ? el("p", { class: "help warn", style: { marginTop: 0 }, text: t("imp.needsFix") }) : null,
+    ]);
+
+    const foot = el(
+      "div",
+      { class: "sheet-foot" },
+      el("button", {
+        class: "btn btn-ghost",
+        type: "button",
+        text: t("imp.review"),
+        disabled: !items.some((it) => it.include),
+        onClick: reviewAll,
+      }),
+      el("button", {
+        class: "btn btn-primary",
+        type: "button",
+        text: t("imp.add", { n }),
+        disabled: !n,
+        onClick: addReady,
+      })
+    );
+    stackWhenTight(foot);
+    inner.append(sheetHead(t("imp.title"), askThenClose || close), body, foot);
+  }
+
+  sheet = openSheet(
+    (inner, close, askThenClose) => {
+      if (st.items) rowsStep(inner, close, askThenClose);
+      else pasteStep(inner, close, askThenClose);
+    },
+    // Pasted text, or rows not yet added, are work a stray click should
+    // not throw away.
+    { unsaved: () => (st.items ? st.items.length > 0 : st.text.trim() !== "") }
+  );
 }
 
 // ============================================================

@@ -54,7 +54,8 @@ Postgres, and both listen to the same realtime stream.
   not a gate in front of the app — see below.
 - **English and Korean**, dark and light, chosen once and followed everywhere —
   the setting lives on the account, not the device.
-- **CSV export** with both what you paid and what it was worth.
+- **CSV export** with both what you paid and what it was worth — and sent
+  straight to an AI, so it can turn a bank screenshot into rows (below).
 
 ## The thing it fixes
 
@@ -68,6 +69,26 @@ along with **the exchange rate on the day it was entered**, frozen, so editing
 today's rate cannot quietly rewrite what last March cost. A rate it does not
 know it asks for — once — rather than guessing 1:1 and being invisibly wrong
 for ever. And a transfer is a transfer.
+
+## Many at once, with an AI
+
+Tally has no AI in it. What it has is a format an AI can be taught.
+
+1. **Export as CSV → Claude, ChatGPT or Gemini.** The file goes with a short
+   set of instructions Tally writes from your own account and category
+   names (also under the 📋 button → "What to say to the AI").
+2. **Send that chat a screenshot of your bank app.** It answers with lines
+   of CSV in the same shape as the export.
+3. **📋 → paste → Check.** Every line becomes a row, with anything wrong said
+   plainly — an account or category that does not exist is never guessed —
+   and anything that looks already recorded left unticked. Then **Add**, with
+   one Undo for the lot, or **Check one by one** in the ordinary editor:
+   Save & next, or Skip.
+
+The reader is forgiving about shape — code fences, chatter before and after,
+a header in any order, tabs, a markdown table, "Rp 12.500" — and strict about
+meaning. It lives in `money.js` and the Android app's `Import.kt`, and the
+same tests run against both.
 
 ## Without an account
 
